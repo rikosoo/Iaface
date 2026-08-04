@@ -2,15 +2,15 @@
 
 Para cada nome em `data/actors.py`, baixa algumas fotos da Wikipédia/Wikimedia
 Commons, detecta o rosto, calcula o embedding e guarda a média dos embeddings
-daquele ator em `data/actors.npz`. A melhor foto de cada um também é copiada
-para `static/actors/` para aparecer no resultado.
+daquele ator em `data/actors.npz`. A melhor foto de cada um também vira uma
+miniatura em `static/actors/` para aparecer no resultado.
 
 Uso:
-    python -m scripts.build_actors                # base completa
-    python -m scripts.build_actors --limit 20     # teste rápido
-    python -m scripts.build_actors --photos-dir fotos   # usa fotos locais
+    python -m scripts.build_actors                     # base completa
+    python -m scripts.build_actors --limit 20          # teste rápido
+    python -m scripts.build_actors --photos-dir fotos  # usa fotos locais
 
-Modo offline: se você já tem imagens, crie uma pasta assim e use --photos-dir
+Modo offline: se você já tem imagens, monte uma pasta assim e use --photos-dir
 
     fotos/
       Tom Hanks/foto1.jpg
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import sys
 import unicodedata
@@ -31,22 +32,23 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app import face  # noqa: E402
+from app import config, face  # noqa: E402
 from data.actors import ACTORS  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[1]
-CACHE_DIR = ROOT / "data" / "cache"
-OUT_NPZ = ROOT / "data" / "actors.npz"
-THUMB_DIR = ROOT / "static" / "actors"
+log = logging.getLogger("build_actors")
 
 API = "https://en.wikipedia.org/w/api.php"
 # A Wikimedia exige um User-Agent identificável em requisições automatizadas.
-UA = "Iaface/1.0 (projeto pessoal de estudo; contato via GitHub) python-urllib"
+UA = "Iaface/1.0 (projeto pessoal de estudo) python-urllib"
 
 IMAGE_EXT = (".jpg", ".jpeg", ".png")
+# Arquivos de artigo que nunca são retrato do ator.
+JUNK_IN_TITLE = ("logo", "icon", "commons", "wiki", "flag", "signature", "map", "star")
+THUMB_SIZE = (320, 320)
 
 
 def slugify(name: str) -> str:
@@ -61,183 +63,186 @@ def _get(url: str, timeout: int = 30) -> bytes:
 
 
 def _api(params: dict) -> dict:
-    params = {**params, "format": "json", "formatversion": "2"}
-    return json.loads(_get(f"{API}?{urllib.parse.urlencode(params)}"))
+    query = urllib.parse.urlencode({**params, "format": "json", "formatversion": "2"})
+    return json.loads(_get(f"{API}?{query}"))
+
+
+def _main_photo(actor: str) -> list[str]:
+    """A imagem principal do artigo — quase sempre o melhor retrato."""
+    data = _api(
+        {
+            "action": "query",
+            "titles": actor,
+            "prop": "pageimages",
+            "piprop": "original",
+            "redirects": "1",
+        }
+    )
+    urls = []
+    for page in data.get("query", {}).get("pages", []):
+        source = page.get("original", {}).get("source", "")
+        if source.lower().endswith(IMAGE_EXT):
+            urls.append(source)
+    return urls
+
+
+def _gallery(actor: str) -> list[str]:
+    """Demais imagens do artigo, já em tamanho reduzido."""
+    data = _api(
+        {
+            "action": "query",
+            "titles": actor,
+            "generator": "images",
+            "gimlimit": "30",
+            "prop": "imageinfo",
+            "iiprop": "url",
+            "iiurlwidth": "600",
+            "redirects": "1",
+        }
+    )
+    urls = []
+    for page in data.get("query", {}).get("pages", []):
+        title = page.get("title", "").lower()
+        if not title.endswith(IMAGE_EXT) or any(w in title for w in JUNK_IN_TITLE):
+            continue
+        for info in page.get("imageinfo", []):
+            url = info.get("thumburl") or info.get("url")
+            if url:
+                urls.append(url)
+    return urls
 
 
 def photo_urls(actor: str, limit: int) -> list[str]:
-    """URLs de fotos do ator, com a imagem principal do artigo em primeiro."""
     urls: list[str] = []
-
-    try:
-        data = _api(
-            {
-                "action": "query",
-                "titles": actor,
-                "prop": "pageimages",
-                "piprop": "original",
-                "redirects": "1",
-            }
-        )
-        for page in data.get("query", {}).get("pages", []):
-            original = page.get("original", {}).get("source")
-            if original and original.lower().endswith(IMAGE_EXT):
-                urls.append(original)
-    except Exception as exc:  # rede instável não deve derrubar o build inteiro
-        print(f"  ! imagem principal de {actor}: {exc}")
-
-    if len(urls) < limit:
+    for source in (_main_photo, _gallery):
+        if len(urls) >= limit:
+            break
         try:
-            data = _api(
-                {
-                    "action": "query",
-                    "titles": actor,
-                    "generator": "images",
-                    "gimlimit": "30",
-                    "prop": "imageinfo",
-                    "iiprop": "url",
-                    "iiurlwidth": "600",
-                    "redirects": "1",
-                }
-            )
-            for page in data.get("query", {}).get("pages", []):
-                title = page.get("title", "").lower()
-                if not title.endswith(IMAGE_EXT):
-                    continue
-                # Logos, ícones de idioma e afins entopem a lista de imagens.
-                if any(w in title for w in ("logo", "icon", "commons", "wiki", "flag", "signature")):
-                    continue
-                for info in page.get("imageinfo", []):
-                    url = info.get("thumburl") or info.get("url")
-                    if url and url not in urls:
-                        urls.append(url)
-        except Exception as exc:
-            print(f"  ! galeria de {actor}: {exc}")
-
+            urls.extend(u for u in source(actor) if u not in urls)
+        except Exception as exc:  # rede instável não pode derrubar o build todo
+            log.warning("%s: falha em %s (%s)", actor, source.__name__, exc)
     return urls[:limit]
 
 
 def download(actor: str, urls: list[str]) -> list[Path]:
-    folder = CACHE_DIR / slugify(actor)
+    folder = config.CACHE_DIR / slugify(actor)
     folder.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
     for i, url in enumerate(urls):
         ext = Path(urllib.parse.urlparse(url).path).suffix.lower()
-        if ext not in IMAGE_EXT:
-            ext = ".jpg"
-        dest = folder / f"{i:02d}{ext}"
+        dest = folder / f"{i:02d}{ext if ext in IMAGE_EXT else '.jpg'}"
         if not dest.exists():
             try:
                 dest.write_bytes(_get(url))
             except Exception as exc:
-                print(f"  ! download {url}: {exc}")
+                log.warning("download falhou (%s): %s", url, exc)
                 continue
         paths.append(dest)
     return paths
 
 
 def local_photos(photos_dir: Path, actor: str) -> list[Path]:
-    folder = photos_dir / actor
-    if not folder.is_dir():
-        folder = photos_dir / slugify(actor)
-    if not folder.is_dir():
-        return []
-    return sorted(p for p in folder.iterdir() if p.suffix.lower() in IMAGE_EXT)
+    for candidate in (photos_dir / actor, photos_dir / slugify(actor)):
+        if candidate.is_dir():
+            return sorted(p for p in candidate.iterdir() if p.suffix.lower() in IMAGE_EXT)
+    return []
 
 
-def save_thumb(src: Path, actor: str) -> str | None:
-    """Guarda um recorte quadrado do rosto para mostrar no resultado."""
-    from PIL import Image
+def save_thumb(detected: face.DetectedFace, actor: str) -> str:
+    """Guarda o recorte do rosto que aparece no card do resultado."""
+    config.THUMB_DIR.mkdir(parents=True, exist_ok=True)
+    dest = config.THUMB_DIR / f"{slugify(actor)}.jpg"
 
-    THUMB_DIR.mkdir(parents=True, exist_ok=True)
-    dest = THUMB_DIR / f"{slugify(actor)}.jpg"
-    try:
-        img = face.load_image(src.read_bytes())
-        boxes, _ = face._models()[0].detect(img)
-        if boxes is not None and len(boxes):
-            x1, y1, x2, y2 = boxes[0]
-            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-            half = max(x2 - x1, y2 - y1) * 0.85
-            img = img.crop(
-                (
-                    max(0, int(cx - half)),
-                    max(0, int(cy - half)),
-                    min(img.width, int(cx + half)),
-                    min(img.height, int(cy + half)),
-                )
-            )
-        img.thumbnail((320, 320), Image.LANCZOS)
-        img.save(dest, "JPEG", quality=88)
-        return dest.name
-    except Exception as exc:
-        print(f"  ! thumbnail de {actor}: {exc}")
-        return None
+    x1, y1, x2, y2 = detected.box
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    half = max(x2 - x1, y2 - y1) * 0.85
+    img = detected.image.crop(
+        (
+            max(0, int(cx - half)),
+            max(0, int(cy - half)),
+            min(detected.image.width, int(cx + half)),
+            min(detected.image.height, int(cy + half)),
+        )
+    )
+    img.thumbnail(THUMB_SIZE, Image.LANCZOS)
+    img.save(dest, "JPEG", quality=88)
+    return dest.name
 
 
 def build_actor(actor: str, per_actor: int, photos_dir: Path | None) -> dict | None:
+    """Vetor médio de um ator. None se nenhuma foto rendeu um rosto."""
     if photos_dir is not None:
         paths = local_photos(photos_dir, actor)[:per_actor]
     else:
         paths = download(actor, photo_urls(actor, per_actor))
 
     if not paths:
-        print(f"  - {actor}: sem fotos")
+        log.info("  - %s: sem fotos", actor)
         return None
 
     vectors: list[np.ndarray] = []
-    best_photo: Path | None = None
+    thumb = ""
     for path in paths:
         try:
-            vectors.append(face.embed_bytes(path.read_bytes()))
-            best_photo = best_photo or path
+            detected = face.detect(face.load_image(path.read_bytes()))
+            vectors.append(face.embed(detected))
         except face.NoFaceFound:
             continue
         except Exception as exc:
-            print(f"  ! {actor} ({path.name}): {exc}")
+            log.warning("  ! %s (%s): %s", actor, path.name, exc)
+            continue
+
+        # A primeira foto aproveitável costuma ser o retrato principal.
+        if not thumb:
+            try:
+                thumb = save_thumb(detected, actor)
+            except Exception as exc:
+                log.warning("  ! miniatura de %s: %s", actor, exc)
 
     if not vectors:
-        print(f"  - {actor}: nenhum rosto reconhecido nas fotos")
+        log.info("  - %s: nenhum rosto reconhecido nas fotos", actor)
         return None
 
     mean = np.mean(vectors, axis=0)
-    mean = mean / np.linalg.norm(mean)
-    thumb = save_thumb(best_photo, actor) if best_photo else None
-    print(f"  + {actor}: {len(vectors)} foto(s)")
-    return {"name": actor, "vector": mean.astype(np.float32), "thumb": thumb or ""}
+    mean /= np.linalg.norm(mean)
+    log.info("  + %s: %d foto(s)", actor, len(vectors))
+    return {"name": actor, "vector": mean.astype(np.float32), "thumb": thumb}
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Monta a base de atores")
+    parser = argparse.ArgumentParser(description="Monta a base de atores do Iaface")
     parser.add_argument("--limit", type=int, default=0, help="usa apenas os N primeiros atores")
     parser.add_argument("--per-actor", type=int, default=4, help="fotos por ator (padrão: 4)")
     parser.add_argument("--workers", type=int, default=4, help="downloads em paralelo")
     parser.add_argument("--photos-dir", type=Path, help="usa fotos locais em vez da Wikipédia")
     args = parser.parse_args()
 
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
     actors = ACTORS[: args.limit] if args.limit else ACTORS
-    print(f"Preparando {len(actors)} atores...")
+    log.info("Preparando %d atores...", len(actors))
     face.warmup()
 
-    # O download é I/O, o embedding é CPU: baixar em paralelo e embutir em
-    # seguida mantém o build rápido sem brigar pelo modelo.
+    # Download é espera de rede e o embedding é CPU: baixar tudo em paralelo
+    # antes evita que a máquina fique ociosa esperando cada foto.
     if args.photos_dir is None:
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
-            list(pool.map(lambda a: download(a, photo_urls(a, args.per_actor)), actors))
+            pool.map(lambda a: download(a, photo_urls(a, args.per_actor)), actors)
 
     entries = [e for a in actors if (e := build_actor(a, args.per_actor, args.photos_dir))]
 
     if not entries:
-        print("Nenhum ator processado — a base não foi gravada.")
+        log.error("Nenhum ator processado — a base não foi gravada.")
         return 1
 
-    OUT_NPZ.parent.mkdir(parents=True, exist_ok=True)
+    config.ACTORS_NPZ.parent.mkdir(parents=True, exist_ok=True)
     np.savez(
-        OUT_NPZ,
+        config.ACTORS_NPZ,
         names=np.array([e["name"] for e in entries]),
         thumbs=np.array([e["thumb"] for e in entries]),
         vectors=np.stack([e["vector"] for e in entries]),
     )
-    print(f"\nBase salva em {OUT_NPZ} com {len(entries)} atores.")
+    log.info("\nBase salva em %s com %d atores.", config.ACTORS_NPZ, len(entries))
     return 0
 
 

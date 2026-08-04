@@ -11,7 +11,7 @@
   <main>
     <header>
       <h1>Com qual ator você se parece?</h1>
-      <p class="sub">Abra a câmera, tire uma foto e veja seu top 3.</p>
+      <p class="sub">Abra a câmera, tire uma foto e veja seu top 3 — e as cores que combinam com você.</p>
     </header>
 
     <section class="stage">
@@ -35,9 +35,47 @@
       </div>
 
       <p id="msg" class="msg" role="status"></p>
+      <ul id="warnings" class="warnings" hidden></ul>
+    </section>
+
+    <section id="verdict" class="verdict" hidden>
+      <img id="analyzed" alt="Rosto analisado" />
+      <div>
+        <h2 id="verdict-text"></h2>
+        <p id="verdict-sub" class="sub"></p>
+      </div>
     </section>
 
     <section id="results" class="results" hidden></section>
+
+    <section id="style" class="style" hidden>
+      <h2>O que combina com você</h2>
+      <p class="sub" id="style-season"></p>
+
+      <div class="tones" id="tones"></div>
+
+      <h3>Sua cartela</h3>
+      <div class="swatches" id="palette"></div>
+
+      <h3>Peças e acessórios</h3>
+      <ul class="pieces" id="pieces"></ul>
+
+      <h3>Evite por perto do rosto</h3>
+      <div class="swatches" id="avoid"></div>
+
+      <p class="fineprint" id="style-notes"></p>
+    </section>
+
+    <details class="how">
+      <summary>Como a comparação é feita?</summary>
+      <ol>
+        <li>O <strong>MTCNN</strong> encontra o rosto na foto e o alinha pelos olhos, nariz e boca.</li>
+        <li>Uma rede <strong>InceptionResnetV1</strong> treinada em milhões de rostos (VGGFace2) transforma esse recorte em 512 números — uma espécie de "impressão digital" do formato do rosto.</li>
+        <li>Esse vetor é comparado com o de cada ator por <strong>similaridade de cosseno</strong>: quanto mais próximo de 1, mais parecidos os rostos.</li>
+        <li>A porcentagem é só uma leitura amigável dessa distância. Duas fotos da <em>mesma</em> pessoa passam de 80%; "parecido de verdade" costuma ficar entre 40% e 60%.</li>
+      </ol>
+      <p>A cartela de cores não vem do ator: ela é medida na sua própria foto (tom de pele nas bochechas e testa, cabelo e íris) e classificada pela análise sazonal.</p>
+    </details>
 
     <footer>
       <span id="dbinfo"></span>

@@ -36,14 +36,20 @@ h1 {
   color: transparent;
 }
 
+h2 { margin: 0 0 4px; font-size: 1.15rem; }
+h3 { margin: 22px 0 10px; font-size: .95rem; color: var(--muted); font-weight: 600; }
+
 .sub { margin: 0; color: var(--muted); }
 
-.stage {
+.panel, .stage, .verdict, .style, .how {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 18px;
-  padding: 18px;
 }
+
+.stage { padding: 18px; }
+
+/* --- Câmera -------------------------------------------------------------- */
 
 .frame {
   position: relative;
@@ -110,7 +116,7 @@ button.primary {
 }
 
 button:hover, .upload:hover { transform: translateY(-1px); filter: brightness(1.08); }
-button:disabled { opacity: .55; cursor: progress; transform: none; }
+button:disabled, .busy { opacity: .55; cursor: progress; transform: none; }
 
 .msg {
   min-height: 1.5em;
@@ -121,8 +127,45 @@ button:disabled { opacity: .55; cursor: progress; transform: none; }
 
 .msg.error { color: #ff8f8f; }
 
+.warnings {
+  margin: 10px 0 0;
+  padding: 12px 16px 12px 32px;
+  border-radius: 12px;
+  background: rgba(255, 190, 90, .08);
+  border: 1px solid rgba(255, 190, 90, .25);
+  color: #f0c98a;
+  font-size: .9rem;
+}
+
+.warnings[hidden] { display: none; }
+
+/* --- Veredito ------------------------------------------------------------ */
+
+.verdict {
+  margin-top: 22px;
+  padding: 18px;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.verdict[hidden] { display: none; }
+
+.verdict img {
+  width: 86px;
+  height: 86px;
+  border-radius: 14px;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+}
+
+.verdict .sub { font-size: .86rem; }
+
+/* --- Ranking ------------------------------------------------------------- */
+
 .results {
-  margin-top: 26px;
+  margin-top: 16px;
   display: grid;
   gap: 14px;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -159,7 +202,7 @@ button:disabled { opacity: .55; cursor: progress; transform: none; }
 
 .noimg { display: grid; place-items: center; color: var(--muted); font-size: 2rem; }
 
-.card h3 { margin: 0 0 10px; font-size: 1.05rem; }
+.card h3 { margin: 0 0 10px; font-size: 1.05rem; color: var(--text); }
 
 .bar {
   height: 7px;
@@ -174,7 +217,66 @@ button:disabled { opacity: .55; cursor: progress; transform: none; }
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
 }
 
-.pct { margin: 8px 0 0; color: var(--muted); font-size: .88rem; }
+.pct { margin: 8px 0 0; color: var(--text); font-size: .88rem; }
+.raw { margin: 2px 0 0; color: var(--muted); font-size: .74rem; }
+
+/* --- Estilo e cores ------------------------------------------------------ */
+
+.style { margin-top: 22px; padding: 20px; }
+.style[hidden] { display: none; }
+
+.tones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 14px;
+}
+
+.tone { display: flex; align-items: center; gap: 10px; }
+
+.tone .dot {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  display: block;
+}
+
+.tone small { display: block; color: var(--muted); font-size: .78rem; }
+
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: 12px;
+}
+
+.swatch { margin: 0; text-align: center; }
+
+.swatch span {
+  display: block;
+  height: 52px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, .12);
+}
+
+.swatch figcaption {
+  margin-top: 6px;
+  font-size: .76rem;
+  color: var(--muted);
+}
+
+.pieces { margin: 0; padding-left: 20px; }
+.pieces li { margin-bottom: 6px; }
+
+.fineprint { margin: 18px 0 0; color: var(--muted); font-size: .8rem; }
+
+/* --- Explicação ---------------------------------------------------------- */
+
+.how { margin-top: 22px; padding: 16px 20px; }
+.how summary { cursor: pointer; font-weight: 600; }
+.how ol { margin: 12px 0; padding-left: 20px; color: var(--muted); }
+.how li { margin-bottom: 8px; }
+.how p { color: var(--muted); margin: 12px 0 0; font-size: .9rem; }
 
 footer {
   margin-top: 28px;
@@ -184,4 +286,8 @@ footer {
   justify-content: center;
   color: var(--muted);
   font-size: .84rem;
+}
+
+@media (max-width: 520px) {
+  .verdict { flex-direction: column; text-align: center; }
 }

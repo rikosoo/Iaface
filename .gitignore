@@ -4,3 +4,5 @@ __pycache__/
 data/cache/
 data/actors.npz
 static/actors/
+
+tests/fixtures/

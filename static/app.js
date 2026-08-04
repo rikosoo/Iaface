@@ -5,29 +5,35 @@ const canvas = $("canvas");
 const shot = $("shot");
 const overlay = $("overlay");
 const msg = $("msg");
-const results = $("results");
 
 let stream = null;
+
+/** Escapa texto vindo do servidor antes de injetar no HTML. */
+const esc = (s) =>
+  String(s).replace(/[&<>"']/g, (c) => `&${{ "&": "amp", "<": "lt", ">": "gt", '"': "quot", "'": "#39" }[c]};`);
 
 function say(text, isError = false) {
   msg.textContent = text;
   msg.classList.toggle("error", isError);
 }
 
-function showOverlay(html) {
-  overlay.innerHTML = html;
-  overlay.hidden = false;
+function hideResults() {
+  ["verdict", "results", "style", "warnings"].forEach((id) => ($(id).hidden = true));
 }
+
+// --- Câmera ---------------------------------------------------------------
 
 async function startCamera() {
   say("");
+  hideResults();
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 960 } },
       audio: false,
     });
   } catch (err) {
-    showOverlay("<p>Câmera bloqueada</p>");
+    overlay.innerHTML = "<p>Câmera bloqueada</p>";
+    overlay.hidden = false;
     say(
       err.name === "NotAllowedError"
         ? "Você precisa permitir o acesso à câmera no navegador."
@@ -44,8 +50,7 @@ async function startCamera() {
   $("start").hidden = true;
   $("capture").hidden = false;
   $("retry").hidden = true;
-  results.hidden = true;
-  say("Enquadre o rosto e tire a foto.");
+  say("Enquadre o rosto, com luz de frente, e tire a foto.");
 }
 
 function stopCamera() {
@@ -66,10 +71,7 @@ async function capture() {
   if (!video.videoWidth) return say("A câmera ainda está carregando…", true);
 
   const blob = await captureBlob();
-  shot.src = URL.createObjectURL(blob);
-  shot.classList.add("mirrored");
-  shot.hidden = false;
-  video.hidden = true;
+  showPreview(URL.createObjectURL(blob), true);
   stopCamera();
 
   $("capture").hidden = true;
@@ -77,11 +79,23 @@ async function capture() {
   await send(blob);
 }
 
+function showPreview(src, mirrored) {
+  shot.src = src;
+  shot.classList.toggle("mirrored", mirrored);
+  shot.hidden = false;
+  video.hidden = true;
+  overlay.hidden = true;
+}
+
+// --- Envio ----------------------------------------------------------------
+
 async function send(blob) {
   say("Analisando seu rosto…");
-  results.hidden = true;
-  const buttons = document.querySelectorAll("button");
-  buttons.forEach((b) => (b.disabled = true));
+  hideResults();
+
+  const buttons = document.querySelectorAll("button, .upload");
+  buttons.forEach((b) => b.classList.add("busy"));
+  document.querySelectorAll("button").forEach((b) => (b.disabled = true));
 
   try {
     const form = new FormData();
@@ -93,35 +107,115 @@ async function send(blob) {
       say(data.detail || "Algo deu errado na análise.", true);
       return;
     }
-    render(data.matches);
+    render(data);
     say("");
   } catch (err) {
     say(`Falha ao falar com o servidor: ${err.message}`, true);
   } finally {
-    buttons.forEach((b) => (b.disabled = false));
+    buttons.forEach((b) => b.classList.remove("busy"));
+    document.querySelectorAll("button").forEach((b) => (b.disabled = false));
   }
 }
 
-function render(matches) {
-  results.innerHTML = matches
+// --- Resultado ------------------------------------------------------------
+
+function render(data) {
+  renderWarnings(data.quality);
+  renderVerdict(data);
+  renderMatches(data.matches);
+  renderStyle(data.style);
+  $("verdict").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderWarnings(quality) {
+  const list = $("warnings");
+  if (!quality.warnings.length) return;
+  list.innerHTML = quality.warnings.map((w) => `<li>${esc(w)}</li>`).join("");
+  list.hidden = false;
+}
+
+function renderVerdict(data) {
+  $("analyzed").src = data.face_crop;
+  $("verdict-text").textContent = data.verdict;
+  $("verdict-sub").textContent =
+    "Este é o recorte que o modelo analisou — ele foi comparado com cada ator da base.";
+  $("verdict").hidden = false;
+}
+
+function renderMatches(matches) {
+  $("results").innerHTML = matches
     .map(
       (m, i) => `
       <article class="card">
         <span class="rank">#${i + 1}</span>
         ${
           m.thumb
-            ? `<img src="${m.thumb}" alt="${m.name}" loading="lazy" />`
+            ? `<img src="${esc(m.thumb)}" alt="${esc(m.name)}" loading="lazy" />`
             : `<div class="noimg">🎬</div>`
         }
-        <h3>${m.name}</h3>
+        <h3>${esc(m.name)}</h3>
         <div class="bar"><i style="width:${m.percent}%"></i></div>
-        <p class="pct">${m.percent}% de semelhança</p>
+        <p class="pct">${m.percent}% — ${esc(m.label)}</p>
+        <p class="raw">cosseno ${m.similarity.toFixed(3)}</p>
       </article>`
     )
     .join("");
-  results.hidden = false;
-  results.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  $("results").hidden = false;
 }
+
+function swatches(colors) {
+  return colors
+    .map(
+      (c) => `
+      <figure class="swatch">
+        <span style="background:${esc(c.hex)}"></span>
+        <figcaption>${esc(c.name)}</figcaption>
+      </figure>`
+    )
+    .join("");
+}
+
+function renderStyle(style) {
+  const section = $("style");
+  if (!style) {
+    section.hidden = true;
+    return;
+  }
+
+  $("style-season").textContent = `${style.season} — ${style.idea}`;
+
+  const tones = [
+    ["Pele", style.skin_hex, `subtom ${style.undertone}, profundidade ${style.depth}`],
+    ["Cabelo", style.hair_hex, `contraste ${style.contrast}`],
+    ["Olhos", style.eyes_hex, ""],
+  ].filter(([, hex]) => hex);
+
+  $("tones").innerHTML = tones
+    .map(
+      ([label, hex, note]) => `
+      <div class="tone">
+        <span class="dot" style="background:${esc(hex)}"></span>
+        <div>
+          <strong>${esc(label)}</strong>
+          <small>${esc(hex)}${note ? " · " + esc(note) : ""}</small>
+        </div>
+      </div>`
+    )
+    .join("");
+
+  $("palette").innerHTML = swatches(style.palette);
+  $("avoid").innerHTML = swatches(style.avoid);
+  $("pieces").innerHTML = [...style.pieces, `Metais: ${style.metals}`, style.contrast_tip]
+    .map((p) => `<li>${esc(p)}</li>`)
+    .join("");
+
+  const notes = [...style.notes];
+  notes.push(`Confiança da leitura de cor: ${style.confidence}.`);
+  $("style-notes").textContent = notes.join(" ");
+  section.hidden = false;
+}
+
+// --- Ligações -------------------------------------------------------------
 
 $("start").addEventListener("click", startCamera);
 $("capture").addEventListener("click", capture);
@@ -130,11 +224,7 @@ $("file").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   stopCamera();
-  video.hidden = true;
-  overlay.hidden = true;
-  shot.src = URL.createObjectURL(file);
-  shot.classList.remove("mirrored");
-  shot.hidden = false;
+  showPreview(URL.createObjectURL(file), false);
   $("capture").hidden = true;
   $("start").hidden = false;
   await send(file);
