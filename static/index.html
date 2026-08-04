@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Iaface — com qual ator você se parece?</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><text y=%2226%22 font-size=%2226%22>🎬</text></svg>" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Com qual ator você se parece?</h1>
+      <p class="sub">Abra a câmera, tire uma foto e veja seu top 3.</p>
+    </header>
+
+    <section class="stage">
+      <div class="frame">
+        <video id="video" playsinline autoplay muted></video>
+        <canvas id="canvas" hidden></canvas>
+        <img id="shot" alt="Foto capturada" hidden />
+        <div id="overlay" class="overlay">
+          <p>Clique em <strong>Abrir câmera</strong> para começar</p>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button id="start" class="primary">Abrir câmera</button>
+        <button id="capture" class="primary" hidden>Tirar foto</button>
+        <button id="retry" hidden>Tirar outra</button>
+        <label class="upload">
+          Enviar arquivo
+          <input id="file" type="file" accept="image/*" hidden />
+        </label>
+      </div>
+
+      <p id="msg" class="msg" role="status"></p>
+    </section>
+
+    <section id="results" class="results" hidden></section>
+
+    <footer>
+      <span id="dbinfo"></span>
+      <span>Tudo roda na sua máquina — nenhuma foto sai daqui.</span>
+    </footer>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
