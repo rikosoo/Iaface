@@ -1,9 +1,25 @@
-# facenet-pytorch fixa torch/torchvision 2.2.x — mantenha as versões juntas.
-torch==2.2.2
-torchvision==0.17.2
-facenet-pytorch==2.6.0
-numpy==1.26.4
-pillow==10.2.0
-fastapi==0.141.1
-uvicorn[standard]==0.52.1
-python-multipart==0.0.32
+# Dependências do Iaface.
+#
+# Instale em dois passos:
+#
+#     pip install -r requirements.txt
+#     pip install --no-deps facenet-pytorch==2.6.0
+#
+# O facenet-pytorch declara torch <2.3.0, e esse PyTorch só tem instalador até
+# o Python 3.12. O código dele roda sem problema com o torch atual (a suíte de
+# testes passa), então instalamos sem as dependências dele e fixamos as versões
+# aqui — é isso que libera o Python 3.13 e 3.14.
+#
+# Os scripts run.sh e run.bat já fazem os dois passos sozinhos.
+
+torch>=2.4,<3
+torchvision>=0.19,<1
+
+numpy>=1.26,<3
+pillow>=10.2,<13
+requests>=2.31,<3
+tqdm>=4.66,<5
+
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+python-multipart>=0.0.9,<1

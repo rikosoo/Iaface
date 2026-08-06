@@ -5,36 +5,29 @@ REM Basta dar dois cliques neste arquivo, ou rodar "run.bat" no terminal.
 setlocal
 cd /d "%~dp0"
 
-REM --- 1. Achar um Python compativel -------------------------------------
-REM O facenet-pytorch exige torch <2.3, que so tem instalador ate o 3.12.
-REM O py.exe (Python Launcher) deixa escolher a versao mesmo com outra no PATH.
+REM --- 1. Achar o Python --------------------------------------------------
+REM Serve da 3.10 em diante. O py.exe (Python Launcher) e consultado primeiro
+REM porque acha as versoes instaladas mesmo quando outra esta no PATH.
 
 set PY=
-for %%V in (3.12 3.11 3.10) do (
+for %%V in (3.13 3.12 3.11 3.10) do (
   if not defined PY (
     py -%%V -c "import sys" >nul 2>nul && set PY=py -%%V
   )
 )
 
 if not defined PY (
-  python -c "import sys; sys.exit(0 if (3,10) <= sys.version_info < (3,13) else 1)" >nul 2>nul
+  python -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>nul
   if not errorlevel 1 set PY=python
 )
 
 if not defined PY (
   echo.
   echo ============================================================
-  echo   Nenhum Python compativel encontrado.
+  echo   Nenhum Python encontrado ^(precisa ser 3.10 ou mais novo^).
   echo.
-  echo   Este projeto precisa do Python 3.10, 3.11 ou 3.12.
-  echo   As versoes 3.13 e 3.14 ainda nao tem PyTorch compativel.
-  echo.
-  echo   Instale o Python 3.12 em:
-  echo   https://www.python.org/downloads/release/python-31210/
-  echo   ^(marque "Add python.exe to PATH" na primeira tela^)
-  echo.
-  echo   Voce pode manter o Python que ja tem instalado: os dois
-  echo   convivem sem problema.
+  echo   Instale em https://www.python.org/downloads/
+  echo   e marque "Add python.exe to PATH" na primeira tela.
   echo ============================================================
   goto :erro
 )
@@ -58,9 +51,6 @@ if not exist .venv\Scripts\python.exe (
 )
 
 REM --- 3. Dependencias ----------------------------------------------------
-REM O marcador evita reinstalar a cada execucao, mas some se o requirements
-REM mudar de conteudo, forcando a atualizacao.
-
 if not exist .venv\Scripts\uvicorn.exe goto :instalar
 if not exist .venv\.deps-ok goto :instalar
 goto :base
@@ -70,13 +60,12 @@ echo.
 echo Instalando as dependencias. Sao cerca de 2 GB - va tomar um cafe.
 .venv\Scripts\python -m pip install --upgrade pip
 .venv\Scripts\python -m pip install -r requirements.txt
-if errorlevel 1 (
-  echo.
-  echo A instalacao falhou. Se a mensagem acima fala em "No matching
-  echo distribution found for torch", o Python usado nao e compativel:
-  echo instale o 3.12 e rode este arquivo de novo.
-  goto :erro
-)
+if errorlevel 1 goto :erro
+
+REM O facenet-pytorch pina torch <2.3.0, que nao tem instalador para o Python
+REM 3.13+. O codigo dele roda com o torch atual, entao entra sem as deps.
+.venv\Scripts\python -m pip install --no-deps facenet-pytorch==2.6.0
+if errorlevel 1 goto :erro
 echo ok > .venv\.deps-ok
 
 :base

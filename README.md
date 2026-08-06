@@ -65,18 +65,21 @@ quando não conseguiu medir o cabelo ou quando o subtom ficou em cima do muro.
 
 ## Instalação
 
-Precisa de Python **3.10, 3.11 ou 3.12** (testado no 3.11).
-
-As versões 3.13 e 3.14 **não funcionam**: o `facenet-pytorch` exige
-`torch <2.3.0`, e esse PyTorch só tem instalador até o 3.12. Se você já tem uma
-versão mais nova, instale o 3.12 ao lado — as duas convivem sem conflito, e no
-Windows o `run.bat` escolhe a certa sozinho pelo `py -3.12`.
+Precisa de Python **3.10 ou mais novo** — inclusive 3.13 e 3.14.
 
 ```bash
 git clone <este-repo> && cd Iaface
 python3 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt
+./.venv/bin/pip install --no-deps facenet-pytorch==2.6.0
 ```
+
+São **dois** comandos de instalação, e o segundo tem o `--no-deps` de
+propósito: o `facenet-pytorch` declara `torch <2.3.0`, uma versão que só tem
+instalador até o Python 3.12. O código dele funciona bem com o PyTorch atual —
+a suíte de testes passa igual nos dois —, então instalamos sem as dependências
+declaradas e fixamos as versões no `requirements.txt`. Os scripts `run.sh` e
+`run.bat` já fazem os dois passos sozinhos.
 
 A primeira execução baixa ~110 MB de pesos do modelo (uma vez só).
 
@@ -141,6 +144,10 @@ tire a foto. Também dá para enviar uma imagem do disco.
 ./.venv/bin/pip install pytest httpx
 ./.venv/bin/python -m pytest
 ```
+
+A suíte foi verificada nas duas pontas do intervalo suportado: com o PyTorch
+2.2 (o que o facenet-pytorch pede) e com o 2.13 + numpy 2 — 45 testes passando
+nos dois, com resultados idênticos.
 
 Os testes de `imaging`, `style` e `matching` rodam em milissegundos, sem tocar
 no modelo. Os de `test_api.py` carregam a rede de verdade e se pulam sozinhos se
