@@ -65,8 +65,12 @@ quando não conseguiu medir o cabelo ou quando o subtom ficou em cima do muro.
 
 ## Instalação
 
-Precisa de Python **3.10, 3.11 ou 3.12** (testado no 3.11). O PyTorch fixado
-aqui ainda não tem versão para o 3.13.
+Precisa de Python **3.10, 3.11 ou 3.12** (testado no 3.11).
+
+As versões 3.13 e 3.14 **não funcionam**: o `facenet-pytorch` exige
+`torch <2.3.0`, e esse PyTorch só tem instalador até o 3.12. Se você já tem uma
+versão mais nova, instale o 3.12 ao lado — as duas convivem sem conflito, e no
+Windows o `run.bat` escolhe a certa sozinho pelo `py -3.12`.
 
 ```bash
 git clone <este-repo> && cd Iaface
