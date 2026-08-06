@@ -65,7 +65,8 @@ quando não conseguiu medir o cabelo ou quando o subtom ficou em cima do muro.
 
 ## Instalação
 
-Precisa de Python 3.10+ (testado no 3.11).
+Precisa de Python **3.10, 3.11 ou 3.12** (testado no 3.11). O PyTorch fixado
+aqui ainda não tem versão para o 3.13.
 
 ```bash
 git clone <este-repo> && cd Iaface
@@ -108,14 +109,19 @@ título do artigo na Wikipédia em inglês) e rode o build de novo.
 
 ## 2) Rodar
 
+No Windows, dê dois cliques em `run.bat` (ou rode `run.bat` no terminal). No
+Mac e no Linux:
+
 ```bash
 ./run.sh
 ```
 
-ou, na mão:
+Os dois fazem a mesma coisa: criam o ambiente, instalam as dependências,
+montam a base se ela não existir e sobem o servidor. Na mão, se preferir:
 
 ```bash
-./.venv/bin/uvicorn app.server:app --port 8000
+./.venv/bin/uvicorn app.server:app --port 8000     # Mac e Linux
+.venv\Scripts\uvicorn app.server:app --port 8000    # Windows
 ```
 
 Abra **http://localhost:8000**, clique em *Abrir câmera*, permita o acesso e
