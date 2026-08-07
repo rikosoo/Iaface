@@ -25,7 +25,9 @@ import json
 import logging
 import re
 import sys
+import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -38,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import config, face  # noqa: E402
 from data.actors import ACTORS  # noqa: E402
+from data.photo_urls import PHOTO_URLS  # noqa: E402
 
 log = logging.getLogger("build_actors")
 
@@ -53,13 +56,33 @@ THUMB_SIZE = (320, 320)
 
 def slugify(name: str) -> str:
     plain = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    # Apóstrofo sai sem deixar rastro: "Lupita Nyong'o" vira "lupita-nyongo",
+    # e não "lupita-nyong-o".
+    plain = plain.replace("'", "").replace("’", "")
     return re.sub(r"[^a-z0-9]+", "-", plain.lower()).strip("-")
 
 
-def _get(url: str, timeout: int = 30) -> bytes:
+def _get(url: str, timeout: int = 30, attempts: int = 3) -> bytes:
+    """Baixa uma URL, insistindo quando a rede falha.
+
+    A Wikimedia responde 429 quando o build pede rápido demais, e conexão
+    doméstica cai sozinha de vez em quando — nos dois casos a mesma URL
+    funciona alguns segundos depois.
+    """
     req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read()
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as exc:
+            # 404 e afins não melhoram com insistência; 429 e 5xx melhoram.
+            if exc.code not in (429, 500, 502, 503, 504) or attempt == attempts:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt == attempts:
+                raise
+        time.sleep(2**attempt)
+    raise RuntimeError("inalcançável")
 
 
 def _api(params: dict) -> dict:
@@ -113,6 +136,13 @@ def _gallery(actor: str) -> list[str]:
 
 
 def photo_urls(actor: str, limit: int) -> list[str]:
+    """URLs das fotos de um ator, da mais provável para a menos provável."""
+    # Link definido na mão ganha da busca: é como se corrige um ator que a
+    # Wikipédia não cobre ou para o qual ela devolve a foto errada.
+    manual = PHOTO_URLS.get(actor)
+    if manual:
+        return list(manual)[:limit]
+
     urls: list[str] = []
     for source in (_main_photo, _gallery):
         if len(urls) >= limit:
@@ -215,6 +245,11 @@ def main() -> int:
     parser.add_argument("--per-actor", type=int, default=4, help="fotos por ator (padrão: 4)")
     parser.add_argument("--workers", type=int, default=4, help="downloads em paralelo")
     parser.add_argument("--photos-dir", type=Path, help="usa fotos locais em vez da Wikipédia")
+    parser.add_argument(
+        "--merge",
+        action="store_true",
+        help="soma à base existente em vez de substituí-la (atualiza quem repetir)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -229,12 +264,39 @@ def main() -> int:
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
             pool.map(lambda a: download(a, photo_urls(a, args.per_actor)), actors)
 
-    entries = [e for a in actors if (e := build_actor(a, args.per_actor, args.photos_dir))]
+    entries: dict[str, dict] = load_existing() if args.merge else {}
+    before = set(entries)
+
+    failed: list[str] = []
+    for actor in actors:
+        entry = build_actor(actor, args.per_actor, args.photos_dir)
+        if entry:
+            entries[actor] = entry
+        else:
+            failed.append(actor)
 
     if not entries:
-        log.error("Nenhum ator processado — a base não foi gravada.")
+        log.error("\nNenhum ator processado — a base não foi gravada.")
+        log.error("Confira sua conexão, ou defina links na mão em data/photo_urls.py")
         return 1
 
+    save(list(entries.values()))
+    report(len(entries), before, failed)
+    return 0
+
+
+def load_existing() -> dict[str, dict]:
+    """Base já gravada, indexada por nome, para o modo --merge."""
+    if not config.ACTORS_NPZ.exists():
+        return {}
+    data = np.load(config.ACTORS_NPZ, allow_pickle=False)
+    return {
+        str(name): {"name": str(name), "thumb": str(thumb), "vector": vector}
+        for name, thumb, vector in zip(data["names"], data["thumbs"], data["vectors"])
+    }
+
+
+def save(entries: list[dict]) -> None:
     config.ACTORS_NPZ.parent.mkdir(parents=True, exist_ok=True)
     np.savez(
         config.ACTORS_NPZ,
@@ -242,8 +304,26 @@ def main() -> int:
         thumbs=np.array([e["thumb"] for e in entries]),
         vectors=np.stack([e["vector"] for e in entries]),
     )
-    log.info("\nBase salva em %s com %d atores.", config.ACTORS_NPZ, len(entries))
-    return 0
+
+
+def report(total: int, before: set[str], failed: list[str]) -> None:
+    """Fecha o build dizendo o que entrou, o que faltou e como consertar."""
+    log.info("\n%s", "-" * 60)
+    log.info("Base salva em %s", config.ACTORS_NPZ)
+    log.info("Atores na base: %d%s", total, f" (antes: {len(before)})" if before else "")
+
+    if not failed:
+        log.info("Todos os atores da lista entraram.")
+        return
+
+    log.info("\nFicaram de fora (%d):", len(failed))
+    for name in failed:
+        log.info("  - %s", name)
+    log.info(
+        "\nMotivo comum: a Wikipédia não tem foto boa da pessoa, ou a rede falhou.\n"
+        "Para resolver, abra data/photo_urls.py, coloque links diretos das fotos\n"
+        "e rode de novo com --merge (assim o que já funcionou não é refeito)."
+    )
 
 
 if __name__ == "__main__":

@@ -94,12 +94,40 @@ A base **não** vem no repositório: o script baixa as fotos da Wikipédia na ho
 Leva alguns minutos (≈180 atores × 4 fotos). Gera `data/actors.npz` e as
 miniaturas em `static/actors/`.
 
+Você **não** precisa baixar fotos nem colar links: o script resolve tudo
+sozinho a partir dos nomes. No fim ele imprime um relatório dizendo quantos
+atores entraram e quais ficaram de fora.
+
 Opções úteis:
 
 ```bash
 --limit 20          # só os 20 primeiros, para testar rápido
 --per-actor 6       # mais fotos por ator = comparação mais estável
+--merge             # soma à base existente em vez de refazer do zero
 --photos-dir fotos  # usa fotos suas em vez de baixar da internet
+```
+
+### Quando alguém fica de fora
+
+Acontece quando a Wikipédia não tem foto boa da pessoa, quando a foto
+principal do artigo não é um retrato, ou quando a rede falhou nas três
+tentativas. Para resolver caso a caso, abra `data/photo_urls.py` e coloque os
+links diretos das imagens:
+
+```python
+PHOTO_URLS = {
+    "Selton Mello": [
+        "https://upload.wikimedia.org/.../Selton_Mello.jpg",
+        "https://exemplo.com/outra-foto.jpg",
+    ],
+}
+```
+
+O que estiver nesse arquivo tem prioridade sobre a busca automática. Depois
+rode com `--merge`, e só quem falhou é refeito:
+
+```bash
+./.venv/bin/python -m scripts.build_actors --merge
 ```
 
 No modo `--photos-dir`, organize assim:
@@ -165,6 +193,7 @@ os pesos ainda não estiverem em cache.
 | `app/server.py` | API FastAPI (`/api/match`, `/api/status`) |
 | `scripts/build_actors.py` | baixa fotos, calcula embeddings e grava a base |
 | `data/actors.py` | lista de atores de referência |
+| `data/photo_urls.py` | links de fotos definidos na mão (opcional) |
 | `static/` | página, estilo e JS da câmera |
 
 ## Limitações
