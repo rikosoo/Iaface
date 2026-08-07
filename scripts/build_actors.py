@@ -25,6 +25,7 @@ import json
 import logging
 import re
 import sys
+import threading
 import time
 import unicodedata
 import urllib.error
@@ -45,13 +46,41 @@ from data.photo_urls import PHOTO_URLS  # noqa: E402
 log = logging.getLogger("build_actors")
 
 API = "https://en.wikipedia.org/w/api.php"
-# A Wikimedia exige um User-Agent identificável em requisições automatizadas.
-UA = "Iaface/1.0 (projeto pessoal de estudo) python-urllib"
+# A política de bots da Wikimedia exige um User-Agent que identifique o projeto
+# E dê um contato. Sem isso, o upload.wikimedia.org responde 429 com "your
+# request does not comply with our robot policy" mesmo em volume baixo.
+# https://foundation.wikimedia.org/wiki/Policy:User-Agent_policy
+UA = "Iaface/1.0 (https://github.com/rikosoo/Iaface) python-urllib"
+
+# Intervalo mínimo entre requisições. A Wikimedia pede no máximo uma por
+# segundo para acesso automatizado; ir mais rápido faz o servidor cortar.
+MIN_REQUEST_INTERVAL = 1.0
+
+# Largura pedida à API. A Wikimedia pede explicitamente que se use miniatura em
+# vez do arquivo original — as miniaturas estão em cache e o original não.
+THUMB_WIDTH = 800
 
 IMAGE_EXT = (".jpg", ".jpeg", ".png")
 # Arquivos de artigo que nunca são retrato do ator.
 JUNK_IN_TITLE = ("logo", "icon", "commons", "wiki", "flag", "signature", "map", "star")
 THUMB_SIZE = (320, 320)
+
+_rate_lock = threading.Lock()
+_last_request = 0.0
+
+
+def _wait_turn() -> None:
+    """Segura a requisição até completar o intervalo mínimo desde a anterior.
+
+    O lock é global de propósito: com vários workers, o que importa é o ritmo
+    somado que o servidor enxerga, não o de cada thread.
+    """
+    global _last_request
+    with _rate_lock:
+        espera = MIN_REQUEST_INTERVAL - (time.monotonic() - _last_request)
+        if espera > 0:
+            time.sleep(espera)
+        _last_request = time.monotonic()
 
 
 def slugify(name: str) -> str:
@@ -62,15 +91,15 @@ def slugify(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", plain.lower()).strip("-")
 
 
-def _get(url: str, timeout: int = 30, attempts: int = 3) -> bytes:
-    """Baixa uma URL, insistindo quando a rede falha.
+def _get(url: str, timeout: int = 30, attempts: int = 4) -> bytes:
+    """Baixa uma URL respeitando o ritmo pedido pelo servidor.
 
-    A Wikimedia responde 429 quando o build pede rápido demais, e conexão
-    doméstica cai sozinha de vez em quando — nos dois casos a mesma URL
-    funciona alguns segundos depois.
+    Um 429 significa "diminua o passo", então a espera cresce bastante entre as
+    tentativas — e quando o servidor manda um Retry-After, é ele que manda.
     """
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     for attempt in range(1, attempts + 1):
+        _wait_turn()
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return resp.read()
@@ -78,11 +107,25 @@ def _get(url: str, timeout: int = 30, attempts: int = 3) -> bytes:
             # 404 e afins não melhoram com insistência; 429 e 5xx melhoram.
             if exc.code not in (429, 500, 502, 503, 504) or attempt == attempts:
                 raise
+            espera = _retry_after(exc) or 5 * 3 ** (attempt - 1)
         except (urllib.error.URLError, TimeoutError, ConnectionError):
             if attempt == attempts:
                 raise
-        time.sleep(2**attempt)
+            espera = 2**attempt
+
+        log.debug("nova tentativa em %.0fs: %s", espera, url)
+        time.sleep(espera)
     raise RuntimeError("inalcançável")
+
+
+def _retry_after(exc: urllib.error.HTTPError) -> float | None:
+    """Segundos pedidos pelo servidor no cabeçalho Retry-After, se houver."""
+    valor = exc.headers.get("Retry-After") if exc.headers else None
+    try:
+        # O cabeçalho também aceita data; aí não insistimos em interpretar.
+        return min(float(valor), 120.0) if valor else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _api(params: dict) -> dict:
@@ -91,20 +134,25 @@ def _api(params: dict) -> dict:
 
 
 def _main_photo(actor: str) -> list[str]:
-    """A imagem principal do artigo — quase sempre o melhor retrato."""
+    """A imagem principal do artigo — quase sempre o melhor retrato.
+
+    Pedimos a miniatura, e não o arquivo original: 800px sobra para reconhecer
+    um rosto, e é o formato que a Wikimedia quer que o acesso automatizado use.
+    """
     data = _api(
         {
             "action": "query",
             "titles": actor,
             "prop": "pageimages",
-            "piprop": "original",
+            "piprop": "thumbnail",
+            "pithumbsize": str(THUMB_WIDTH),
             "redirects": "1",
         }
     )
     urls = []
     for page in data.get("query", {}).get("pages", []):
-        source = page.get("original", {}).get("source", "")
-        if source.lower().endswith(IMAGE_EXT):
+        source = page.get("thumbnail", {}).get("source", "")
+        if source.lower().split("?")[0].endswith(IMAGE_EXT):
             urls.append(source)
     return urls
 
@@ -119,7 +167,7 @@ def _gallery(actor: str) -> list[str]:
             "gimlimit": "30",
             "prop": "imageinfo",
             "iiprop": "url",
-            "iiurlwidth": "600",
+            "iiurlwidth": str(THUMB_WIDTH),
             "redirects": "1",
         }
     )
@@ -129,8 +177,9 @@ def _gallery(actor: str) -> list[str]:
         if not title.endswith(IMAGE_EXT) or any(w in title for w in JUNK_IN_TITLE):
             continue
         for info in page.get("imageinfo", []):
-            url = info.get("thumburl") or info.get("url")
-            if url:
+            # Só a miniatura: o arquivo original é justamente o que a política
+            # de bots da Wikimedia pede para não buscar em massa.
+            if url := info.get("thumburl"):
                 urls.append(url)
     return urls
 
@@ -172,10 +221,37 @@ def download(actor: str, urls: list[str]) -> list[Path]:
 
 
 def local_photos(photos_dir: Path, actor: str) -> list[Path]:
+    """Fotos de uma pessoa na pasta local, por subpasta ou arquivo solto."""
     for candidate in (photos_dir / actor, photos_dir / slugify(actor)):
         if candidate.is_dir():
             return sorted(p for p in candidate.iterdir() if p.suffix.lower() in IMAGE_EXT)
-    return []
+
+    # Arquivo solto com o nome da pessoa: fotos/Tom Hanks.jpg
+    soltos = sorted(
+        p
+        for p in photos_dir.glob("*")
+        if p.is_file() and p.suffix.lower() in IMAGE_EXT and p.stem == actor
+    )
+    return soltos
+
+
+def local_actors(photos_dir: Path) -> list[str]:
+    """Quem está na pasta de fotos, lido dos próprios nomes de arquivo.
+
+    É o que permite ir enchendo a base aos poucos: basta jogar mais uma pasta
+    (ou mais um arquivo) ali dentro e rodar de novo com --merge, sem precisar
+    editar lista nenhuma no código.
+    """
+    if not photos_dir.is_dir():
+        return []
+
+    nomes = {
+        item.name if item.is_dir() else item.stem
+        for item in photos_dir.iterdir()
+        if not item.name.startswith(".")
+        and (item.is_dir() or item.suffix.lower() in IMAGE_EXT)
+    }
+    return sorted(nomes)
 
 
 def save_thumb(detected: face.DetectedFace, actor: str) -> str:
@@ -240,11 +316,30 @@ def build_actor(actor: str, per_actor: int, photos_dir: Path | None) -> dict | N
 
 
 def main() -> int:
+    global MIN_REQUEST_INTERVAL
+
     parser = argparse.ArgumentParser(description="Monta a base de atores do Iaface")
     parser.add_argument("--limit", type=int, default=0, help="usa apenas os N primeiros atores")
     parser.add_argument("--per-actor", type=int, default=4, help="fotos por ator (padrão: 4)")
-    parser.add_argument("--workers", type=int, default=4, help="downloads em paralelo")
-    parser.add_argument("--photos-dir", type=Path, help="usa fotos locais em vez da Wikipédia")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=2,
+        help="downloads em paralelo (o ritmo total continua limitado)",
+    )
+    parser.add_argument(
+        "--rate",
+        type=float,
+        default=MIN_REQUEST_INTERVAL,
+        help=f"segundos entre requisições (padrão: {MIN_REQUEST_INTERVAL})",
+    )
+    parser.add_argument(
+        "--photos-dir",
+        type=Path,
+        nargs="?",
+        const=config.PHOTOS_DIR,
+        help=f"usa suas fotos em vez da Wikipédia (padrão: {config.PHOTOS_DIR.name}/)",
+    )
     parser.add_argument(
         "--merge",
         action="store_true",
@@ -254,8 +349,29 @@ def main() -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    actors = ACTORS[: args.limit] if args.limit else ACTORS
-    log.info("Preparando %d atores...", len(actors))
+    MIN_REQUEST_INTERVAL = args.rate
+
+    if args.photos_dir is not None:
+        # Na pasta de fotos, quem manda são os nomes que estão lá dentro — é
+        # assim que dá para ir enchendo a base aos poucos, sem editar código.
+        actors = local_actors(args.photos_dir)
+        if not actors:
+            log.error("Nenhuma foto em %s/", args.photos_dir)
+            log.error(
+                "Crie uma pasta por pessoa (%s/Tom Hanks/foto.jpg) ou jogue\n"
+                "arquivos soltos com o nome dela (%s/Tom Hanks.jpg).",
+                args.photos_dir,
+                args.photos_dir,
+            )
+            return 1
+        log.info("Encontrei %d pessoa(s) em %s/", len(actors), args.photos_dir)
+    else:
+        actors = ACTORS
+
+    if args.limit:
+        actors = actors[: args.limit]
+
+    log.info("Preparando %d...", len(actors))
     face.warmup()
 
     # Download é espera de rede e o embedding é CPU: baixar tudo em paralelo
@@ -320,9 +436,10 @@ def report(total: int, before: set[str], failed: list[str]) -> None:
     for name in failed:
         log.info("  - %s", name)
     log.info(
-        "\nMotivo comum: a Wikipédia não tem foto boa da pessoa, ou a rede falhou.\n"
-        "Para resolver, abra data/photo_urls.py, coloque links diretos das fotos\n"
-        "e rode de novo com --merge (assim o que já funcionou não é refeito)."
+        "\nSe apareceu 'HTTP Error 429' no log, foi a Wikimedia pedindo calma:\n"
+        "rode de novo com --merge e --rate 2 (o que já baixou fica em cache).\n"
+        "\nSe a pessoa simplesmente não tem foto boa no acervo, abra\n"
+        "data/photo_urls.py, coloque links diretos das imagens e rode com --merge."
     )
 
 

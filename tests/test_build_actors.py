@@ -8,12 +8,20 @@ gravar a base) e por isso carrega o modelo.
 """
 
 import urllib.error
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 from app import config
 from scripts import build_actors as build
+
+
+@pytest.fixture(autouse=True)
+def sem_espera(monkeypatch):
+    """Desliga o limitador de ritmo: teste não precisa ser educado com ninguém."""
+    monkeypatch.setattr(build, "MIN_REQUEST_INTERVAL", 0.0)
+    monkeypatch.setattr(build.time, "sleep", lambda s: None)
 
 
 @pytest.fixture
@@ -98,7 +106,6 @@ def test_get_retries_on_a_temporary_failure(monkeypatch):
             raise urllib.error.URLError("caiu")
         raise SystemExit("chegou na terceira")  # marcador: houve retentativa
 
-    monkeypatch.setattr(build.time, "sleep", lambda s: None)
     monkeypatch.setattr(build.urllib.request, "urlopen", flaky)
     with pytest.raises(SystemExit):
         build._get("https://e.com/a.jpg")
@@ -112,7 +119,6 @@ def test_get_does_not_retry_a_404(monkeypatch):
         calls.append(1)
         raise urllib.error.HTTPError("u", 404, "Not Found", {}, None)
 
-    monkeypatch.setattr(build.time, "sleep", lambda s: None)
     monkeypatch.setattr(build.urllib.request, "urlopen", not_found)
     with pytest.raises(urllib.error.HTTPError):
         build._get("https://e.com/a.jpg")
@@ -232,7 +238,7 @@ def fake_wikipedia(photo):
             if query.get("prop") == ["pageimages"]:
                 corpo = {
                     "query": {
-                        "pages": [{"original": {"source": f"http://127.0.0.1:{porta}/foto.jpg"}}]
+                        "pages": [{"thumbnail": {"source": f"http://127.0.0.1:{porta}/foto.jpg"}}]
                     }
                 }
             else:
@@ -241,7 +247,7 @@ def fake_wikipedia(photo):
                         "pages": [
                             {
                                 "title": "File:Retrato.jpg",
-                                "imageinfo": [{"url": f"http://127.0.0.1:{porta}/foto.jpg"}],
+                                "imageinfo": [{"thumburl": f"http://127.0.0.1:{porta}/foto.jpg"}],
                             },
                             # Ruído que o filtro tem que descartar:
                             {"title": "File:Commons-logo.svg", "imageinfo": []},
@@ -306,3 +312,225 @@ def test_build_fails_loudly_when_nothing_could_be_fetched(base, fake_wikipedia, 
 
     assert build.main() == 1
     assert not config.ACTORS_NPZ.exists()  # base antiga não é destruída
+
+
+# --- política de robô da Wikimedia ----------------------------------------
+
+
+def test_user_agent_identifies_the_project_with_a_contact():
+    """Sem contato no User-Agent, a Wikimedia responde 429 por política."""
+    assert "Iaface" in build.UA
+    assert "http" in build.UA  # a URL do projeto é o contato
+
+
+def test_a_429_is_retried_honoring_retry_after(monkeypatch):
+    esperas = []
+    monkeypatch.setattr(build.time, "sleep", esperas.append)
+
+    tentativas = []
+
+    def limitado(req, timeout):
+        tentativas.append(1)
+        if len(tentativas) < 2:
+            raise urllib.error.HTTPError("u", 429, "Too Many Requests", {"Retry-After": "7"}, None)
+        raise SystemExit("passou na segunda")
+
+    monkeypatch.setattr(build.urllib.request, "urlopen", limitado)
+    with pytest.raises(SystemExit):
+        build._get("https://e.com/a.jpg")
+
+    assert len(tentativas) == 2
+    assert 7 in esperas  # esperou o que o servidor pediu, não o nosso palpite
+
+
+def test_retry_after_falls_back_when_the_header_is_absent(monkeypatch):
+    esperas = []
+    monkeypatch.setattr(build.time, "sleep", esperas.append)
+
+    def limitado(req, timeout):
+        raise urllib.error.HTTPError("u", 429, "Too Many Requests", {}, None)
+
+    monkeypatch.setattr(build.urllib.request, "urlopen", limitado)
+    with pytest.raises(urllib.error.HTTPError):
+        build._get("https://e.com/a.jpg")
+
+    # Espera crescente: um 429 pede recuo de verdade, não meio segundo.
+    assert esperas == sorted(esperas) and esperas[0] >= 5
+
+
+def test_retry_after_ignores_a_date_header():
+    exc = urllib.error.HTTPError("u", 429, "", {"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}, None)
+    assert build._retry_after(exc) is None
+
+
+def test_retry_after_is_capped():
+    exc = urllib.error.HTTPError("u", 429, "", {"Retry-After": "99999"}, None)
+    assert build._retry_after(exc) == 120.0
+
+
+def test_rate_limiter_spaces_requests_apart(monkeypatch):
+    dormidas = []
+    relogio = iter([0.0, 0.0, 0.05, 0.05])  # segunda chamada logo após a primeira
+
+    monkeypatch.setattr(build, "MIN_REQUEST_INTERVAL", 1.0)
+    monkeypatch.setattr(build, "_last_request", 0.0)
+    monkeypatch.setattr(build.time, "sleep", dormidas.append)
+    monkeypatch.setattr(build.time, "monotonic", lambda: next(relogio))
+
+    build._wait_turn()
+    build._wait_turn()
+
+    assert dormidas and dormidas[-1] == pytest.approx(0.95, abs=0.01)
+
+
+def test_gallery_takes_the_thumbnail_and_skips_the_original(monkeypatch):
+    resposta = {
+        "query": {
+            "pages": [
+                {
+                    "title": "File:Retrato.jpg",
+                    "imageinfo": [{"thumburl": "https://e.com/800px-x.jpg", "url": "https://e.com/x.jpg"}],
+                },
+                # Sem miniatura disponível: não vale buscar o original.
+                {"title": "File:Outra.jpg", "imageinfo": [{"url": "https://e.com/original.jpg"}]},
+            ]
+        }
+    }
+    monkeypatch.setattr(build, "_api", lambda params: resposta)
+    assert build._gallery("Fulano") == ["https://e.com/800px-x.jpg"]
+
+
+def test_main_photo_asks_for_a_thumbnail(monkeypatch):
+    pedidos = {}
+
+    def espiao(params):
+        pedidos.update(params)
+        return {"query": {"pages": [{"thumbnail": {"source": "https://e.com/800px-x.jpg"}}]}}
+
+    monkeypatch.setattr(build, "_api", espiao)
+    assert build._main_photo("Fulano") == ["https://e.com/800px-x.jpg"]
+    assert pedidos["piprop"] == "thumbnail"
+    assert pedidos["pithumbsize"] == str(build.THUMB_WIDTH)
+
+
+def test_url_with_query_string_is_still_recognized_as_an_image(monkeypatch):
+    # A API devolve as URLs com ?utm_source=... grudado no fim.
+    com_query = "https://e.com/800px-x.jpg?utm_source=en.wikipedia.org"
+    monkeypatch.setattr(build, "_api", lambda p: {"query": {"pages": [{"thumbnail": {"source": com_query}}]}})
+    assert build._main_photo("Fulano") == [com_query]
+
+
+# --- pasta de fotos do usuário --------------------------------------------
+
+
+def foto_vazia(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"nao importa o conteudo aqui")
+
+
+def test_local_actors_reads_names_from_subfolders(tmp_path):
+    foto_vazia(tmp_path / "Tom Hanks" / "1.jpg")
+    foto_vazia(tmp_path / "Fernanda Torres" / "premiere.png")
+    assert build.local_actors(tmp_path) == ["Fernanda Torres", "Tom Hanks"]
+
+
+def test_local_actors_reads_names_from_loose_files(tmp_path):
+    foto_vazia(tmp_path / "Alice Braga.jpg")
+    foto_vazia(tmp_path / "Wagner Moura.jpeg")
+    assert build.local_actors(tmp_path) == ["Alice Braga", "Wagner Moura"]
+
+
+def test_local_actors_mixes_both_layouts(tmp_path):
+    foto_vazia(tmp_path / "Tom Hanks" / "1.jpg")
+    foto_vazia(tmp_path / "Alice Braga.jpg")
+    assert build.local_actors(tmp_path) == ["Alice Braga", "Tom Hanks"]
+
+
+def test_local_actors_ignores_junk(tmp_path):
+    foto_vazia(tmp_path / "Tom Hanks.jpg")
+    (tmp_path / "LEIA-ME.md").write_text("instruções")
+    (tmp_path / ".DS_Store").write_bytes(b"lixo do mac")
+    assert build.local_actors(tmp_path) == ["Tom Hanks"]
+
+
+def test_local_actors_is_empty_for_a_missing_folder(tmp_path):
+    assert build.local_actors(tmp_path / "nao-existe") == []
+
+
+def test_local_photos_finds_a_subfolder(tmp_path):
+    foto_vazia(tmp_path / "Tom Hanks" / "b.jpg")
+    foto_vazia(tmp_path / "Tom Hanks" / "a.jpg")
+    encontradas = build.local_photos(tmp_path, "Tom Hanks")
+    assert [p.name for p in encontradas] == ["a.jpg", "b.jpg"]
+
+
+def test_local_photos_finds_a_loose_file(tmp_path):
+    foto_vazia(tmp_path / "Alice Braga.jpg")
+    assert [p.name for p in build.local_photos(tmp_path, "Alice Braga")] == ["Alice Braga.jpg"]
+
+
+def test_local_photos_accepts_the_slug_as_folder_name(tmp_path):
+    foto_vazia(tmp_path / "tais-araujo" / "1.jpg")
+    assert len(build.local_photos(tmp_path, "Taís Araújo")) == 1
+
+
+def test_local_photos_ignores_files_that_are_not_images(tmp_path):
+    foto_vazia(tmp_path / "Tom Hanks" / "1.jpg")
+    (tmp_path / "Tom Hanks" / "anotacoes.txt").write_text("nao é foto")
+    assert len(build.local_photos(tmp_path, "Tom Hanks")) == 1
+
+
+def test_photos_dir_build_uses_the_folder_names(base, photo, monkeypatch):
+    """O caminho completo do modo pasta: nomes vêm do disco, não de actors.py."""
+    pytest.importorskip("torch")
+    from app import face
+
+    try:
+        face.warmup()
+    except Exception as exc:
+        pytest.skip(f"modelo indisponível: {exc}")
+
+    fotos = base / "fotos"
+    (fotos / "Pessoa Um").mkdir(parents=True)
+    (fotos / "Pessoa Um" / "1.jpg").write_bytes(photo)
+    (fotos / "Pessoa Dois.jpg").write_bytes(photo)
+
+    monkeypatch.setattr(build, "ACTORS", ["Alguem Que Nao Esta Na Pasta"])
+    monkeypatch.setattr("sys.argv", ["build_actors", "--photos-dir", str(fotos)])
+
+    assert build.main() == 0
+    assert set(build.load_existing()) == {"Pessoa Um", "Pessoa Dois"}
+
+
+def test_photos_dir_grows_the_database_little_by_little(base, photo, monkeypatch):
+    pytest.importorskip("torch")
+    from app import face
+
+    try:
+        face.warmup()
+    except Exception as exc:
+        pytest.skip(f"modelo indisponível: {exc}")
+
+    fotos = base / "fotos"
+    fotos.mkdir()
+    (fotos / "Primeira Pessoa.jpg").write_bytes(photo)
+    monkeypatch.setattr("sys.argv", ["build_actors", "--photos-dir", str(fotos)])
+    assert build.main() == 0
+
+    # Semana seguinte: mais uma foto na pasta, e a anterior tem que continuar lá.
+    (fotos / "Segunda Pessoa.jpg").write_bytes(photo)
+    monkeypatch.setattr("sys.argv", ["build_actors", "--photos-dir", str(fotos), "--merge"])
+    assert build.main() == 0
+
+    assert set(build.load_existing()) == {"Primeira Pessoa", "Segunda Pessoa"}
+
+
+def test_photos_dir_complains_when_the_folder_is_empty(base, monkeypatch, caplog):
+    vazia = base / "fotos"
+    vazia.mkdir()
+    monkeypatch.setattr("sys.argv", ["build_actors", "--photos-dir", str(vazia)])
+    monkeypatch.setattr(build.face, "warmup", lambda: None)
+
+    with caplog.at_level("ERROR", logger="build_actors"):
+        assert build.main() == 1
+    assert "Nenhuma foto" in caplog.text

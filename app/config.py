@@ -10,6 +10,8 @@ DATA_DIR = ROOT / "data"
 ACTORS_NPZ = DATA_DIR / "actors.npz"
 CACHE_DIR = DATA_DIR / "cache"
 THUMB_DIR = STATIC_DIR / "actors"
+# Onde você joga suas próprias fotos para entrarem na base.
+PHOTOS_DIR = ROOT / "fotos"
 
 # --- Detecção -------------------------------------------------------------
 # Rostos menores que isso geram embeddings instáveis.

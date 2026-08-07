@@ -6,3 +6,5 @@ data/actors.npz
 static/actors/
 
 tests/fixtures/
+fotos/*
+!fotos/LEIA-ME.md

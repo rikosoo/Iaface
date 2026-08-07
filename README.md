@@ -107,11 +107,26 @@ Opções úteis:
 --photos-dir fotos  # usa fotos suas em vez de baixar da internet
 ```
 
+### Ritmo e a política de robô da Wikimedia
+
+A Wikimedia corta acesso automatizado que não siga as regras dela, respondendo
+`HTTP 429` — inclusive em volume baixo. O script já se comporta: manda um
+User-Agent com contato, pede **miniatura** em vez do arquivo original (a
+Wikimedia pede isso explicitamente), respeita um intervalo mínimo entre
+requisições e obedece ao cabeçalho `Retry-After` quando o servidor manda
+esperar.
+
+Se ainda assim aparecer 429, é só ir mais devagar e continuar de onde parou —
+o que já baixou fica em cache:
+
+```bash
+./.venv/bin/python -m scripts.build_actors --merge --rate 2
+```
+
 ### Quando alguém fica de fora
 
 Acontece quando a Wikipédia não tem foto boa da pessoa, quando a foto
-principal do artigo não é um retrato, ou quando a rede falhou nas três
-tentativas. Para resolver caso a caso, abra `data/photo_urls.py` e coloque os
+principal do artigo não é um retrato, ou quando a rede falhou nas tentativas. Para resolver caso a caso, abra `data/photo_urls.py` e coloque os
 links diretos das imagens:
 
 ```python
@@ -130,17 +145,36 @@ rode com `--merge`, e só quem falhou é refeito:
 ./.venv/bin/python -m scripts.build_actors --merge
 ```
 
-No modo `--photos-dir`, organize assim:
+Para trocar quem entra na comparação pela busca automática, edite a lista em
+`data/actors.py` (use o título do artigo na Wikipédia em inglês) e rode o build
+de novo.
+
+## As suas próprias fotos
+
+Se preferir montar a base na mão — ou ir enchendo aos poucos —, jogue as fotos
+na pasta `fotos/` e rode:
+
+```bash
+./.venv/bin/python -m scripts.build_actors --photos-dir --merge
+```
+
+Os nomes vêm da própria pasta, sem editar código. Dois jeitos, que podem
+conviver:
 
 ```
 fotos/
-  Tom Hanks/1.jpg
-  Tom Hanks/2.jpg
-  Fernanda Torres/1.jpg
+  Tom Hanks.jpg          <- arquivo solto: o nome do arquivo é o nome da pessoa
+  Fernanda Torres/       <- pasta: várias fotos, e o app tira a média dos rostos
+    1.jpg
+    2.jpg
 ```
 
-Para trocar quem entra na comparação, edite a lista em `data/actors.py` (use o
-título do artigo na Wikipédia em inglês) e rode o build de novo.
+Com `--merge`, cada execução **soma** à base: você joga mais uma foto na pasta,
+roda de novo, e quem já estava lá continua. Sem `--merge` a base é refeita do
+zero e quem não está na pasta some.
+
+Serve tanto para atores que a Wikipédia não cobre bem quanto para brincar
+comparando com amigos e família. Detalhes em `fotos/LEIA-ME.md`.
 
 ## 2) Rodar
 
@@ -174,8 +208,8 @@ tire a foto. Também dá para enviar uma imagem do disco.
 ```
 
 A suíte foi verificada nas duas pontas do intervalo suportado: com o PyTorch
-2.2 (o que o facenet-pytorch pede) e com o 2.13 + numpy 2 — 45 testes passando
-nos dois, com resultados idênticos.
+2.2 (o que o facenet-pytorch pede) e com o 2.13 + numpy 2, com resultados
+idênticos.
 
 Os testes de `imaging`, `style` e `matching` rodam em milissegundos, sem tocar
 no modelo. Os de `test_api.py` carregam a rede de verdade e se pulam sozinhos se
@@ -194,6 +228,7 @@ os pesos ainda não estiverem em cache.
 | `scripts/build_actors.py` | baixa fotos, calcula embeddings e grava a base |
 | `data/actors.py` | lista de atores de referência |
 | `data/photo_urls.py` | links de fotos definidos na mão (opcional) |
+| `fotos/` | suas próprias fotos, uma pasta ou arquivo por pessoa |
 | `static/` | página, estilo e JS da câmera |
 
 ## Limitações
