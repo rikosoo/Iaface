@@ -377,8 +377,7 @@ def main() -> int:
     # Download é espera de rede e o embedding é CPU: baixar tudo em paralelo
     # antes evita que a máquina fique ociosa esperando cada foto.
     if args.photos_dir is None:
-        with ThreadPoolExecutor(max_workers=args.workers) as pool:
-            pool.map(lambda a: download(a, photo_urls(a, args.per_actor)), actors)
+        fetch_all(actors, args.per_actor, args.workers, args.rate)
 
     entries: dict[str, dict] = load_existing() if args.merge else {}
     before = set(entries)
@@ -399,6 +398,45 @@ def main() -> int:
     save(list(entries.values()))
     report(len(entries), before, failed)
     return 0
+
+
+def fetch_all(actors: list[str], per_actor: int, workers: int, rate: float) -> None:
+    """Baixa as fotos de todo mundo, mostrando o progresso.
+
+    Esta é de longe a etapa mais demorada — o limitador de ritmo faz cada
+    requisição esperar sua vez —, então ela precisa dar sinal de vida: sem isso
+    são dezenas de minutos de tela parada, indistinguíveis de um travamento.
+    """
+    total = len(actors)
+    # ~2 chamadas de API + as fotos, e o intervalo mínimo vale para todas.
+    minutos = total * (2 + per_actor) * rate / 60
+    log.info("Baixando fotos de %d pessoas — estimativa: %.0f min.", total, minutos)
+    log.info("Pode deixar rodando; o que baixa fica em cache e --merge continua depois.\n")
+
+    inicio = time.monotonic()
+    prontos = 0
+    lock = threading.Lock()
+
+    def uma(actor: str) -> None:
+        nonlocal prontos
+        fotos = download(actor, photo_urls(actor, per_actor))
+        with lock:
+            prontos += 1
+            decorrido = time.monotonic() - inicio
+            falta = (decorrido / prontos) * (total - prontos) / 60
+            log.info(
+                "[%3d/%d] %-28s %d foto(s)  — faltam ~%.0f min",
+                prontos,
+                total,
+                actor[:28],
+                len(fotos),
+                falta,
+            )
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(uma, actors))
+
+    log.info("\nDownload concluído em %.0f min. Analisando os rostos...\n", (time.monotonic() - inicio) / 60)
 
 
 def load_existing() -> dict[str, dict]:

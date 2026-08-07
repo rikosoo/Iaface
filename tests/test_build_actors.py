@@ -534,3 +534,36 @@ def test_photos_dir_complains_when_the_folder_is_empty(base, monkeypatch, caplog
     with caplog.at_level("ERROR", logger="build_actors"):
         assert build.main() == 1
     assert "Nenhuma foto" in caplog.text
+
+
+# --- progresso do download ------------------------------------------------
+
+
+def test_fetch_all_reports_progress_for_each_person(base, monkeypatch, caplog):
+    """Sem sinal de vida, meia hora de download parece um travamento."""
+    monkeypatch.setattr(build, "photo_urls", lambda a, n: ["https://e.com/x.jpg"])
+    monkeypatch.setattr(build, "download", lambda a, urls: [Path("x.jpg")])
+
+    with caplog.at_level("INFO", logger="build_actors"):
+        build.fetch_all(["Ator Um", "Ator Dois", "Ator Tres"], per_actor=4, workers=1, rate=0.0)
+
+    texto = caplog.text
+    assert "estimativa" in texto
+    for nome in ("Ator Um", "Ator Dois", "Ator Tres"):
+        assert nome in texto
+    assert "[  3/3]" in texto  # o contador chega ao fim
+    assert "faltam" in texto
+
+
+def test_fetch_all_estimate_grows_with_the_rate(base, monkeypatch, caplog):
+    monkeypatch.setattr(build, "photo_urls", lambda a, n: [])
+    monkeypatch.setattr(build, "download", lambda a, urls: [])
+
+    def estimativa(rate):
+        caplog.clear()
+        with caplog.at_level("INFO", logger="build_actors"):
+            build.fetch_all(["A"] * 60, per_actor=4, workers=1, rate=rate)
+        linha = next(l for l in caplog.text.splitlines() if "estimativa" in l)
+        return float(linha.split("estimativa: ")[1].split(" min")[0])
+
+    assert estimativa(2.0) > estimativa(1.0) > 0
