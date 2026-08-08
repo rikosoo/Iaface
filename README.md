@@ -7,6 +7,39 @@ cores** que combina com o seu tom de pele, cabelo e olhos.
 Nenhuma foto sai da sua máquina: a câmera, o servidor e o modelo rodam todos em
 `localhost`.
 
+## Privacidade
+
+**A foto é processada em memória e descartada. Nada é gravado em disco.**
+
+Uma foto de rosto analisada para medir semelhança é dado biométrico, que no
+GDPR entra no **Artigo 9** — a categoria especial. O app é construído para não
+reter nada:
+
+- A imagem chega como **corpo cru da requisição**, não como multipart. Essa é
+  uma decisão de projeto, não um detalhe: o parser de formulário do Starlette
+  grava uploads acima de 1 MB num arquivo temporário em disco, e uma foto de
+  celular passa fácil desse tamanho. Por isso o `python-multipart` nem está
+  entre as dependências.
+- O vetor facial não é guardado depois da resposta.
+- A resposta vai com `Cache-Control: no-store`, então o navegador não guarda o
+  recorte do rosto.
+- Sem cookies, sem armazenamento local, sem analytics, sem chamada externa.
+- O log do servidor registra `POST /api/match 200` — método, caminho e código,
+  nunca a imagem.
+
+Isso é verificável: `tests/test_privacy.py` roda uma análise de verdade e
+confere que nenhum arquivo novo apareceu no disco e que nenhum arquivo
+temporário foi aberto durante o processo, inclusive com uma foto acima de 1 MB.
+
+A página `/privacidade` explica tudo isso para quem for usar o app, e o aviso
+aparece na própria tela de captura.
+
+> Se você hospedar isto na internet em vez de rodar em `localhost`, **você
+> passa a ser o controlador dos dados**: precisa de base legal para tratar dado
+> do Art. 9 (na prática, consentimento explícito), aviso de privacidade
+> próprio, registro de tratamento e provavelmente uma DPIA. O código não gravar
+> nada ajuda, mas não substitui nenhuma dessas obrigações.
+
 ## O que o app responde
 
 **1. Com quem você se parece.** Três atores, com a porcentagem, uma etiqueta em
@@ -230,6 +263,8 @@ os pesos ainda não estiverem em cache.
 | `data/photo_urls.py` | links de fotos definidos na mão (opcional) |
 | `fotos/` | suas próprias fotos, uma pasta ou arquivo por pessoa |
 | `static/` | página, estilo e JS da câmera |
+| `static/share.js` | monta a imagem de resultado no navegador |
+| `static/privacidade.html` | página de privacidade |
 
 ## Limitações
 

@@ -18,7 +18,7 @@ function say(text, isError = false) {
 }
 
 function hideResults() {
-  ["verdict", "results", "style", "warnings"].forEach((id) => ($(id).hidden = true));
+  ["verdict", "results", "style", "warnings", "share"].forEach((id) => ($(id).hidden = true));
 }
 
 // --- Câmera ---------------------------------------------------------------
@@ -98,9 +98,13 @@ async function send(blob) {
   document.querySelectorAll("button").forEach((b) => (b.disabled = true));
 
   try {
-    const form = new FormData();
-    form.append("photo", blob, "foto.jpg");
-    const res = await fetch("/api/match", { method: "POST", body: form });
+    // Corpo cru, e não FormData: o parser multipart do servidor derramaria
+    // a foto para um arquivo temporário em disco.
+    const res = await fetch("/api/match", {
+      method: "POST",
+      headers: { "Content-Type": blob.type || "image/jpeg" },
+      body: blob,
+    });
     const data = await res.json();
 
     if (!res.ok) {
@@ -124,6 +128,7 @@ function render(data) {
   renderVerdict(data);
   renderMatches(data.matches);
   renderStyle(data.style);
+  window.prepararCompartilhamento(data);
   $("verdict").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 

@@ -15,6 +15,17 @@
     </header>
 
     <section class="stage">
+      <div class="privacy-note">
+        <span class="shield" aria-hidden="true">🔒</span>
+        <div>
+          <strong>Sua foto é analisada na memória e descartada.</strong>
+          Nada é gravado em disco e nada sai da sua máquina — a análise roda em
+          <code>localhost</code>. Foto de rosto é dado biométrico (GDPR Art. 9),
+          por isso o app não retém nem a imagem nem o vetor facial.
+          <a href="/privacidade">Como funciona, em detalhe →</a>
+        </div>
+      </div>
+
       <div class="frame">
         <video id="video" playsinline autoplay muted></video>
         <canvas id="canvas" hidden></canvas>
@@ -48,6 +59,30 @@
 
     <section id="results" class="results" hidden></section>
 
+    <section id="share" class="share" hidden>
+      <h2>Compartilhar</h2>
+      <p class="sub">A imagem é montada aqui no navegador. Nada é enviado para lugar nenhum até você escolher.</p>
+
+      <div class="share-preview">
+        <canvas id="card"></canvas>
+      </div>
+
+      <label class="toggle">
+        <input type="checkbox" id="include-photo" />
+        <span>Incluir minha foto na imagem</span>
+      </label>
+
+      <div class="share-buttons">
+        <button id="share-native" class="primary" hidden>Compartilhar…</button>
+        <button id="share-download">Baixar imagem</button>
+        <button id="share-whatsapp">WhatsApp</button>
+        <button id="share-pinterest">Pinterest</button>
+        <button id="share-copy">Copiar texto</button>
+      </div>
+
+      <p class="fineprint" id="share-hint"></p>
+    </section>
+
     <section id="style" class="style" hidden>
       <h2>O que combina com você</h2>
       <p class="sub" id="style-season"></p>
@@ -79,10 +114,11 @@
 
     <footer>
       <span id="dbinfo"></span>
-      <span>Tudo roda na sua máquina — nenhuma foto sai daqui.</span>
+      <a href="/privacidade">Privacidade</a>
     </footer>
   </main>
 
+  <script src="/static/share.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

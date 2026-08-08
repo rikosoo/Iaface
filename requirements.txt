@@ -22,4 +22,5 @@ tqdm>=4.66,<5
 
 fastapi>=0.115,<1
 uvicorn[standard]>=0.30,<1
-python-multipart>=0.0.9,<1
+# Sem python-multipart de propósito: o parser de formulário derrama uploads
+# acima de 1 MB em arquivo temporário, e foto de rosto não pode tocar o disco.

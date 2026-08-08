@@ -48,8 +48,9 @@ def client(tmp_path_factory):
     matching._db = None
 
 
-def upload(client, data: bytes, filename: str = "foto.jpg"):
-    return client.post("/api/match", files={"photo": (filename, data, "image/jpeg")})
+def upload(client, data: bytes):
+    """A foto vai como corpo cru: multipart derramaria para o disco."""
+    return client.post("/api/match", content=data, headers={"Content-Type": "image/jpeg"})
 
 
 def jpeg(img: Image.Image) -> bytes:

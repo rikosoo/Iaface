@@ -14,7 +14,7 @@ import logging
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
@@ -112,6 +112,11 @@ def index() -> FileResponse:
     return FileResponse(config.STATIC_DIR / "index.html")
 
 
+@app.get("/privacidade")
+def privacy() -> FileResponse:
+    return FileResponse(config.STATIC_DIR / "privacidade.html")
+
+
 @app.get("/api/status", response_model=StatusResponse)
 def status() -> StatusResponse:
     try:
@@ -121,8 +126,24 @@ def status() -> StatusResponse:
 
 
 @app.post("/api/match", response_model=MatchResponse)
-async def match(photo: UploadFile = File(...)) -> MatchResponse:
-    raw = await photo.read()
+async def match(request: Request, response: Response) -> MatchResponse:
+    """Analisa a foto e devolve o resultado — sem gravar nada em disco.
+
+    A imagem chega como corpo cru da requisição, e não como multipart de
+    formulário, de propósito: o parser multipart do Starlette derrama uploads
+    acima de 1 MB num arquivo temporário no disco. Foto de rosto é dado
+    biométrico (GDPR art. 9), então ela não pode encostar no disco em momento
+    nenhum. Lendo o corpo direto, os bytes existem só na memória do processo.
+    """
+    # Sem no-store, o resultado (que inclui o recorte do rosto) ficaria no
+    # cache do navegador depois que a pessoa sair da página.
+    response.headers["Cache-Control"] = "no-store"
+
+    tamanho = request.headers.get("content-length")
+    if tamanho and int(tamanho) > config.MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Imagem grande demais (máx. 12 MB).")
+
+    raw = await request.body()
     if not raw:
         raise HTTPException(status_code=400, detail="Imagem vazia.")
     if len(raw) > config.MAX_UPLOAD_BYTES:
