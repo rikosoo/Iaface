@@ -61,7 +61,9 @@ def jpeg(img: Image.Image) -> bytes:
 
 def test_status_reports_the_loaded_database(client):
     body = client.get("/api/status").json()
-    assert body == {"ready": True, "actors": 2}
+    assert body["ready"] is True
+    assert body["actors"] == 2
+    assert body["public"] is False  # localhost não exige consentimento
 
 
 def test_index_is_served(client):

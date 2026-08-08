@@ -1,0 +1,21 @@
+# Troque pelo seu domínio e e-mail antes de subir.
+iaface.seusite.com {
+	reverse_proxy iaface:8000
+
+	# Permite embutir a página no seu site principal. Sem esta linha o
+	# navegador recusa o iframe entre domínios diferentes.
+	header {
+		Content-Security-Policy "frame-ancestors 'self' https://www.seusite.com https://seusite.com"
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	# O log registra método, caminho e status — nunca o corpo da requisição,
+	# que é onde a foto viaja.
+	log {
+		output file /data/access.log
+		format json
+	}
+}

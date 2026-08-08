@@ -26,6 +26,7 @@ function hideResults() {
 async function startCamera() {
   say("");
   hideResults();
+  if (!consentimentoOk()) return;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 960 } },
@@ -100,11 +101,12 @@ async function send(blob) {
   try {
     // Corpo cru, e não FormData: o parser multipart do servidor derramaria
     // a foto para um arquivo temporário em disco.
-    const res = await fetch("/api/match", {
-      method: "POST",
-      headers: { "Content-Type": blob.type || "image/jpeg" },
-      body: blob,
-    });
+    const headers = { "Content-Type": blob.type || "image/jpeg" };
+    // Em modo público o servidor recusa a análise sem esta marca — é a
+    // materialização do consentimento explícito exigido pelo Art. 9.
+    if (modoPublico) headers["X-Iaface-Consent"] = "granted";
+
+    const res = await fetch("/api/match", { method: "POST", headers, body: blob });
     const data = await res.json();
 
     if (!res.ok) {
@@ -236,9 +238,31 @@ $("file").addEventListener("change", async (e) => {
   e.target.value = "";
 });
 
+// --- Consentimento --------------------------------------------------------
+
+let modoPublico = false;
+
+/** Em modo público, nada acontece antes da autorização explícita. */
+function consentimentoOk() {
+  if (!modoPublico) return true;
+  if ($("consent-check").checked) return true;
+
+  say("Marque a autorização acima para continuar.", true);
+  $("consent").classList.add("pedindo");
+  setTimeout(() => $("consent").classList.remove("pedindo"), 1200);
+  return false;
+}
+
+$("file").addEventListener("click", (e) => {
+  if (!consentimentoOk()) e.preventDefault();
+});
+
 fetch("/api/status")
   .then((r) => r.json())
   .then((s) => {
+    modoPublico = Boolean(s.public);
+    $("consent").hidden = !modoPublico;
+
     $("dbinfo").textContent = s.ready
       ? `${s.actors} atores na base`
       : "Base de atores vazia — rode: python -m scripts.build_actors";

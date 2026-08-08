@@ -1,0 +1,44 @@
+# Sobe o Iaface com HTTPS automático.
+#
+#   1. aponte o DNS de iaface.seusite.com para este servidor
+#   2. troque o domínio e o e-mail no Caddyfile
+#   3. docker compose up -d
+#
+# O Caddy resolve o certificado sozinho — e HTTPS não é opcional aqui: o
+# navegador só libera a câmera em contexto seguro.
+
+services:
+  iaface:
+    build: .
+    restart: unless-stopped
+    environment:
+      IAFACE_PUBLIC: "1"           # exige consentimento explícito
+      IAFACE_TRUST_PROXY: "1"      # o Caddy está na frente
+      IAFACE_MAX_CONCURRENCY: "2"  # ~200 MB por análise simultânea
+      IAFACE_RATE_LIMIT: "10"      # análises por IP...
+      IAFACE_RATE_WINDOW: "60"     # ...a cada 60s
+      # Só se o front estiver em outro domínio; com iframe, deixe vazio.
+      # IAFACE_CORS_ORIGINS: "https://www.seusite.com"
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - iaface
+
+volumes:
+  caddy_data:
+  caddy_config:

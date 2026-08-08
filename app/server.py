@@ -15,12 +15,14 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 
-from app import config, face, matching, style
+from app import config, face, limits, matching, style
 
 log = logging.getLogger("iaface")
 
@@ -75,6 +77,9 @@ class MatchResponse(BaseModel):
 class StatusResponse(BaseModel):
     ready: bool
     actors: int
+    # O front usa isto para exigir o consentimento antes de abrir a câmera.
+    public: bool
+    busy: bool
 
 
 @asynccontextmanager
@@ -89,6 +94,20 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Iaface", docs_url=None, redoc_url=None, lifespan=lifespan)
+
+fila = limits.Semaforo(config.MAX_CONCURRENCY, config.QUEUE_TIMEOUT)
+limite_ip = limits.LimitePorIP(config.RATE_LIMIT, config.RATE_WINDOW)
+
+if config.CORS_ORIGINS:
+    # Só entra quando a API é chamada de outro domínio. Embutido em iframe a
+    # origem é a mesma, e aí a lista fica vazia — que é o padrão mais fechado.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.CORS_ORIGINS,
+        allow_methods=["POST", "GET"],
+        allow_headers=["Content-Type", "X-Iaface-Consent"],
+        max_age=3600,
+    )
 
 
 def _actor_db() -> matching.ActorDatabase:
@@ -119,10 +138,12 @@ def privacy() -> FileResponse:
 
 @app.get("/api/status", response_model=StatusResponse)
 def status() -> StatusResponse:
+    ocupado = fila.livres == 0
     try:
-        return StatusResponse(ready=True, actors=len(matching.load()))
+        atores = len(matching.load())
     except matching.ActorDatabaseMissing:
-        return StatusResponse(ready=False, actors=0)
+        return StatusResponse(ready=False, actors=0, public=config.PUBLIC, busy=ocupado)
+    return StatusResponse(ready=True, actors=atores, public=config.PUBLIC, busy=ocupado)
 
 
 @app.post("/api/match", response_model=MatchResponse)
@@ -151,6 +172,25 @@ async def match(request: Request, response: Response) -> MatchResponse:
 
     db = _actor_db()
 
+    if config.PUBLIC:
+        # Consentimento explícito é a base legal para tratar dado do Art. 9.
+        # O front só manda este cabeçalho depois que a pessoa marca a caixa.
+        if request.headers.get("x-iaface-consent") != "granted":
+            raise HTTPException(
+                status_code=403,
+                detail="É preciso autorizar a análise da foto antes de continuar.",
+            )
+        limite_ip.registrar(limits.ip_do_cliente(request))
+
+    # A inferência é CPU pura e síncrona. Rodá-la direto aqui travaria o laço
+    # de eventos e, com ele, todas as outras requisições — inclusive as
+    # estáticas. Medido: /api/status ia de 2ms para 776ms durante uma análise.
+    async with fila:
+        return await run_in_threadpool(_analisar, raw, db)
+
+
+def _analisar(raw: bytes, db: matching.ActorDatabase) -> MatchResponse:
+    """Todo o trabalho pesado, rodando fora do laço de eventos."""
     try:
         image = face.load_image(raw)
     except (UnidentifiedImageError, OSError, ValueError):

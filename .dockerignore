@@ -1,0 +1,9 @@
+.venv/
+.git/
+__pycache__/
+*.pyc
+tests/
+fotos/
+data/cache/
+run.bat
+run.sh

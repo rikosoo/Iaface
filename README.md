@@ -39,6 +39,9 @@ aparece na própria tela de captura.
 > do Art. 9 (na prática, consentimento explícito), aviso de privacidade
 > próprio, registro de tratamento e provavelmente uma DPIA. O código não gravar
 > nada ajuda, mas não substitui nenhuma dessas obrigações.
+>
+> O modo público (`IAFACE_PUBLIC=1`) já traz o consentimento obrigatório, os
+> limites de carga e o empacotamento com HTTPS — veja **[DEPLOY.md](DEPLOY.md)**.
 
 ## O que o app responde
 
@@ -265,6 +268,8 @@ os pesos ainda não estiverem em cache.
 | `static/` | página, estilo e JS da câmera |
 | `static/share.js` | monta a imagem de resultado no navegador |
 | `static/privacidade.html` | página de privacidade |
+| `app/limits.py` | fila de concorrência e limite por IP (modo público) |
+| `DEPLOY.md` | guia de publicação no seu site |
 
 ## Limitações
 
