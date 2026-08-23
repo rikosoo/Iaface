@@ -1,8 +1,13 @@
 """Lista de atores usados como referência.
 
-Cada item é o título do artigo na Wikipédia em inglês (é o que o script de
-build usa para localizar as fotos). Para adicionar alguém, basta incluir o
-título exato do artigo aqui e rodar `python -m scripts.build_actors` de novo.
+Cada item é o título do artigo na Wikipédia em inglês — é por ele que o script
+de build encontra as fotos. Para adicionar alguém, inclua o título e rode
+`python -m scripts.build_actors --merge` de novo.
+
+Nome que colide com outra pessoa famosa precisa do sufixo de desambiguação que
+a Wikipédia usa: "Joe Cole" é o jogador de futebol, o ator é "Joe Cole
+(actor)". O sufixo some antes de aparecer na tela, e o build ainda tenta
+sozinho a variante "(actor)" quando o nome simples não devolve nada.
 """
 
 ACTORS: list[str] = [
@@ -194,3 +199,142 @@ ACTORS: list[str] = [
     "Marjorie Estiano",
     "Nathalia Dill",
 ]
+
+
+# --- Elenco por produção --------------------------------------------------
+# Agrupado por série/filme porque é assim que a lista costuma ser pensada.
+# A chave é só organização: o que vale para a busca é o nome, que precisa ser
+# o título do artigo na Wikipédia em inglês.
+
+BY_PRODUCTION: dict[str, list[str]] = {
+    "Game of Thrones": [
+        "Emilia Clarke",
+        "Kit Harington",
+        "Sophie Turner",
+        "Maisie Williams",
+        "Lena Headey",
+    ],
+    "House of the Dragon": [
+        "Matt Smith (actor)",
+        "Olivia Cooke",
+        "Emma D'Arcy",
+        "Rhys Ifans",
+        "Eve Best",
+    ],
+    "Harry Potter": [
+        "Daniel Radcliffe",
+        "Rupert Grint",
+        "Tom Felton",
+        "Evanna Lynch",
+    ],
+    "Friends": [
+        "Courteney Cox",
+        "Lisa Kudrow",
+        "Matt LeBlanc",
+        "Matthew Perry",
+        "David Schwimmer",
+    ],
+    "Breaking Bad": [
+        "Bryan Cranston",
+        "Aaron Paul",
+        "Anna Gunn",
+        "Bob Odenkirk",
+        "Giancarlo Esposito",
+    ],
+    "Stranger Things": [
+        "Natalia Dyer",
+        "Gaten Matarazzo",
+        "Joseph Quinn",
+    ],
+    "Peaky Blinders": [
+        # "Joe Cole" sozinho é o jogador de futebol na Wikipédia.
+        "Joe Cole (actor)",
+        # Idem: "Paul Anderson" leva ao diretor.
+        "Paul Anderson (actor)",
+        "Sophie Rundle",
+        "Helen McCrory",
+    ],
+    "Money Heist / La Casa de Papel": [
+        "Úrsula Corberó",
+        "Álvaro Morte",
+        "Alba Flores",
+        "Itziar Ituño",
+        "Pedro Alonso (actor)",
+    ],
+    "Sex and the City": [
+        "Sarah Jessica Parker",
+        "Kim Cattrall",
+        "Kristin Davis",
+        "Cynthia Nixon",
+        "Chris Noth",
+    ],
+    "How I Met Your Mother": [
+        "Josh Radnor",
+        "Cobie Smulders",
+        "Neil Patrick Harris",
+        "Alyson Hannigan",
+        "Jason Segel",
+    ],
+    "The Vampire Diaries": [
+        "Nina Dobrev",
+        "Paul Wesley",
+        "Ian Somerhalder",
+        "Candice King",
+        "Kat Graham",
+    ],
+    "Gossip Girl": [
+        "Blake Lively",
+        "Leighton Meester",
+        "Ed Westwick",
+        "Chace Crawford",
+        "Taylor Momsen",
+    ],
+    "Twilight": [
+        "Kristen Stewart",
+        "Robert Pattinson",
+        "Taylor Lautner",
+        "Ashley Greene",
+        "Nikki Reed",
+    ],
+    "Outer Banks": [
+        "Chase Stokes",
+        "Madelyn Cline",
+        "Madison Bailey",
+        "Rudy Pankow",
+        "Jonathan Daviss",
+    ],
+    "Euphoria": [
+        "Alexa Demie",
+        "Barbie Ferreira",
+    ],
+    "Wednesday": [
+        "Emma Myers",
+        "Percy Hynes White",
+        "Joy Sunday",
+        "Catherine Zeta-Jones",
+    ],
+    "Percy Jackson and the Olympians": [
+        "Walker Scobell",
+        "Leah Sava Jeffries",
+        "Aryan Simhadri",
+        "Dior Goodjohn",
+        "Charlie Bushnell",
+    ],
+    "Fight Club": [
+        "Edward Norton",
+        "Helena Bonham Carter",
+    ],
+}
+
+
+def _sem_repetir(nomes: list[str]) -> list[str]:
+    """Remove repetidos mantendo a ordem.
+
+    Vários nomes aparecem tanto na lista geral quanto no elenco de alguma
+    produção. Processar duas vezes só gastaria download e tempo de build.
+    """
+    vistos: set[str] = set()
+    return [n for n in nomes if not (n in vistos or vistos.add(n))]
+
+
+ACTORS = _sem_repetir(ACTORS + [n for elenco in BY_PRODUCTION.values() for n in elenco])
