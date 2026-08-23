@@ -83,6 +83,16 @@ def _wait_turn() -> None:
         _last_request = time.monotonic()
 
 
+# A Wikipédia desambigua títulos com um parêntese no fim ("Matt Smith (actor)").
+# Isso é endereço, não nome de gente: some antes de aparecer na tela.
+_DESAMBIGUACAO = re.compile(r"\s*\((?:actor|actress|ator|atriz)\)\s*$", re.IGNORECASE)
+
+
+def display_name(titulo: str) -> str:
+    """Nome como o resultado deve mostrar, sem o sufixo de desambiguação."""
+    return _DESAMBIGUACAO.sub("", titulo).strip()
+
+
 def slugify(name: str) -> str:
     plain = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
     # Apóstrofo sai sem deixar rastro: "Lupita Nyong'o" vira "lupita-nyongo",
@@ -192,14 +202,29 @@ def photo_urls(actor: str, limit: int) -> list[str]:
     if manual:
         return list(manual)[:limit]
 
+    urls = _buscar(actor, limit)
+
+    # Nome que colide com outra pessoa famosa cai numa página que não é a do
+    # ator — "Joe Cole" é o jogador, "Paul Anderson" é o diretor. A Wikipédia
+    # desambigua com "(actor)", então vale uma segunda tentativa antes de
+    # desistir de alguém.
+    if not urls and not _DESAMBIGUACAO.search(actor):
+        alternativo = f"{actor} (actor)"
+        log.info("  ~ %s: nada encontrado, tentando '%s'", actor, alternativo)
+        urls = _buscar(alternativo, limit)
+
+    return urls
+
+
+def _buscar(titulo: str, limit: int) -> list[str]:
     urls: list[str] = []
     for source in (_main_photo, _gallery):
         if len(urls) >= limit:
             break
         try:
-            urls.extend(u for u in source(actor) if u not in urls)
+            urls.extend(u for u in source(titulo) if u not in urls)
         except Exception as exc:  # rede instável não pode derrubar o build todo
-            log.warning("%s: falha em %s (%s)", actor, source.__name__, exc)
+            log.warning("%s: falha em %s (%s)", titulo, source.__name__, exc)
     return urls[:limit]
 
 
@@ -257,7 +282,7 @@ def local_actors(photos_dir: Path) -> list[str]:
 def save_thumb(detected: face.DetectedFace, actor: str) -> str:
     """Guarda o recorte do rosto que aparece no card do resultado."""
     config.THUMB_DIR.mkdir(parents=True, exist_ok=True)
-    dest = config.THUMB_DIR / f"{slugify(actor)}.jpg"
+    dest = config.THUMB_DIR / f"{slugify(display_name(actor))}.jpg"
 
     x1, y1, x2, y2 = detected.box
     cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
@@ -311,8 +336,9 @@ def build_actor(actor: str, per_actor: int, photos_dir: Path | None) -> dict | N
 
     mean = np.mean(vectors, axis=0)
     mean /= np.linalg.norm(mean)
-    log.info("  + %s: %d foto(s)", actor, len(vectors))
-    return {"name": actor, "vector": mean.astype(np.float32), "thumb": thumb}
+    nome = display_name(actor)
+    log.info("  + %s: %d foto(s)", nome, len(vectors))
+    return {"name": nome, "vector": mean.astype(np.float32), "thumb": thumb}
 
 
 def main() -> int:
@@ -386,7 +412,7 @@ def main() -> int:
     for actor in actors:
         entry = build_actor(actor, args.per_actor, args.photos_dir)
         if entry:
-            entries[actor] = entry
+            entries[entry["name"]] = entry
         else:
             failed.append(actor)
 
