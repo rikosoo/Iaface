@@ -127,8 +127,12 @@ A base **não** vem no repositório: o script baixa as fotos da Wikipédia na ho
 ./.venv/bin/python -m scripts.build_actors
 ```
 
-Leva alguns minutos (≈180 atores × 4 fotos). Gera `data/actors.npz` e as
-miniaturas em `static/actors/`.
+Leva alguns minutos (≈260 atores × 4 fotos, ~25 min no ritmo padrão). Gera
+`data/actors.npz` e as miniaturas em `static/actors/`.
+
+A lista tem duas partes: um elenco geral de cinema e, em `BY_PRODUCTION`, os
+nomes agrupados por série ou saga — Game of Thrones, Stranger Things, Friends,
+Breaking Bad, La Casa de Papel, Harry Potter, Peaky Blinders e outras.
 
 Você **não** precisa baixar fotos nem colar links: o script resolve tudo
 sozinho a partir dos nomes. No fim ele imprime um relatório dizendo quantos
